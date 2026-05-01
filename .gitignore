@@ -1,0 +1,7 @@
+main
+*.o
+*.out
+*.s
+*.bc
+*.ll
+*.zip
