@@ -203,6 +203,106 @@ fn op_xor(arg1: u64,arg2: u64,val_type: u32) -> u64 {
     _ => panic!("unsupported val_type for xor: {}",val_type)
   }
 }
+fn op_shl(arg1: u64,arg2: u64,val_type: u32) -> u64 {
+  match val_type {
+    VAL_I8  => {((arg1 as u8) << (arg2 as u8)) as u64 }
+    VAL_I16 => {((arg1 as u16) << (arg2 as u16)) as u64 }
+    VAL_I32  => {((arg1 as u32) << (arg2 as u32)) as u64 }
+    VAL_I64 => { arg1 << arg2 }
+    _ => panic!("unsupported val_type for shl: {}",val_type)
+  }
+}
+fn op_lshr(arg1: u64,arg2: u64,val_type: u32) -> u64 {
+  match val_type {
+    VAL_I8  => {((arg1 as u8) >> (arg2 as u8)) as u64 }
+    VAL_I16 => {((arg1 as u16) >> (arg2 as u16)) as u64 }
+    VAL_I32  => {((arg1 as u32) >> (arg2 as u32)) as u64 }
+    VAL_I64 => { arg1 >> arg2 }
+    _ => panic!("unsupported val_type for lshr: {}",val_type)
+  }
+}
+fn op_ashr(arg1: u64,arg2: u64,val_type: u32) -> u64 {
+  match val_type {
+    VAL_I8  => {((arg1 as i8) >> (arg2 as i8)) as u64 }
+    VAL_I16 => {((arg1 as i16) >> (arg2 as i16)) as u64 }
+    VAL_I32  => {((arg1 as i32) >> (arg2 as i32)) as u64 }
+    VAL_I64 => { ((arg1 as i64) >> (arg2 as i64)) as u64 }
+    _ => panic!("unsupported val_type for ashr: {}",val_type)
+  }
+}
+fn op_cvt(src: u64,src_type: u32,signed: bool,dst_type: u32) -> u64 {
+  match (src_type,signed,dst_type) {
+    // uint <-> uint
+    (VAL_I8,false,VAL_I16)  => {src as u8 as u16 as u64 }
+    (VAL_I8,false,VAL_I32)  => {src as u8 as u32 as u64 }
+    (VAL_I8,false,VAL_I64)  => {src as u8 as u64 as u64 }
+    (VAL_I16,false,VAL_I8)  => {src as u16 as u8 as u64 }
+    (VAL_I16,false,VAL_I32) => {src as u16 as u32 as u64 }
+    (VAL_I16,false,VAL_I64) => {src as u16 as u64 as u64 }
+    (VAL_I32,false,VAL_I8)  => {src as u32 as u8 as u64 }
+    (VAL_I32,false,VAL_I16) => {src as u32 as u16 as u64 }
+    (VAL_I32,false,VAL_I64) => {src as u32 as u64 as u64 }
+    (VAL_I64,false,VAL_I8)  => {src as u64 as u8 as u64 }
+    (VAL_I64,false,VAL_I16) => {src as u64 as u16 as u64 }
+    (VAL_I64,false,VAL_I64) => {src as u64 as u32 as u64 }
+    // sint <-> sint
+    (VAL_I8,true,VAL_I16)  => {src as i8 as i16 as u64 }
+    (VAL_I8,true,VAL_I32)  => {src as i8 as i32 as u64 }
+    (VAL_I8,true,VAL_I64)  => {src as i8 as i64 as u64 }
+    (VAL_I16,true,VAL_I8)  => {src as i16 as i8 as u64 }
+    (VAL_I16,true,VAL_I32) => {src as i16 as i32 as u64 }
+    (VAL_I16,true,VAL_I64) => {src as i16 as i64 as u64 }
+    (VAL_I32,true,VAL_I8)  => {src as i32 as i8 as u64 }
+    (VAL_I32,true,VAL_I16) => {src as i32 as i16 as u64 }
+    (VAL_I32,true,VAL_I64) => {src as i32 as i64 as u64 }
+    (VAL_I64,true,VAL_I8)  => {src as i64 as i8 as u64 }
+    (VAL_I64,true,VAL_I16) => {src as i64 as i16 as u64 }
+    (VAL_I64,true,VAL_I64) => {src as i64 as i32 as u64 }
+    // uint -> float
+    (VAL_I8,false,VAL_F32)  => {(src as u8 as f32).to_bits() as u64 }
+    (VAL_I8,false,VAL_F64)  => {(src as u8 as f64).to_bits() as u64 }
+    (VAL_I16,false,VAL_F32) => {(src as u16 as f32).to_bits() as u64 }
+    (VAL_I16,false,VAL_F64) => {(src as u16 as f64).to_bits() as u64 }
+    (VAL_I32,false,VAL_F32) => {(src as u32 as f32).to_bits() as u64 }
+    (VAL_I32,false,VAL_F64) => {(src as u32 as f64).to_bits() as u64 }
+    (VAL_I64,false,VAL_F32) => {(src as u64 as f32).to_bits() as u64 }
+    (VAL_I64,false,VAL_F64) => {(src as u64 as f64).to_bits() as u64 }
+    // int -> float
+    (VAL_I8,true,VAL_F32)  => {(src as i8 as f32).to_bits() as u64 }
+    (VAL_I8,true,VAL_F64)  => {(src as i8 as f64).to_bits() as u64 }
+    (VAL_I16,true,VAL_F32) => {(src as i16 as f32).to_bits() as u64 }
+    (VAL_I16,true,VAL_F64) => {(src as i16 as f64).to_bits() as u64 }
+    (VAL_I32,true,VAL_F32) => {(src as i32 as f32).to_bits() as u64 }
+    (VAL_I32,true,VAL_F64) => {(src as i32 as f64).to_bits() as u64 }
+    (VAL_I64,true,VAL_F32) => {(src as i64 as f32).to_bits() as u64 }
+    (VAL_I64,true,VAL_F64) => {(src as i64 as f64).to_bits() as u64 }
+    // float -> uint
+    (VAL_F32,false,VAL_I8)  => {f32::from_bits(src as u32) as u8 as u64 }
+    (VAL_F64,false,VAL_I8)  => {f64::from_bits(src as u64) as u8 as u64 }
+    (VAL_F32,false,VAL_I16) => {f32::from_bits(src as u32) as u16 as u64 }
+    (VAL_F64,false,VAL_I16) => {f64::from_bits(src as u64) as u16 as u64 }
+    (VAL_F32,false,VAL_I32)  => {f32::from_bits(src as u32) as u32 as u64 }
+    (VAL_F64,false,VAL_I32)  => {f64::from_bits(src as u64) as u32 as u64 }
+    (VAL_F32,false,VAL_I64)  => {f32::from_bits(src as u32) as u64 }
+    (VAL_F64,false,VAL_I64)  => {f64::from_bits(src as u64) as u64 }
+    // float -> sint
+    (VAL_F32,true,VAL_I8)  => {f32::from_bits(src as u32) as i8 as u64 }
+    (VAL_F64,true,VAL_I8)  => {f64::from_bits(src as u64) as i8 as u64 }
+    (VAL_F32,true,VAL_I16) => {f32::from_bits(src as u32) as i16 as u64 }
+    (VAL_F64,true,VAL_I16) => {f64::from_bits(src as u64) as i16 as u64 }
+    (VAL_F32,true,VAL_I32)  => {f32::from_bits(src as u32) as i32 as u64 }
+    (VAL_F64,true,VAL_I32)  => {f64::from_bits(src as u64) as i32 as u64 }
+    (VAL_F32,true,VAL_I64)  => {f32::from_bits(src as u32) as i64 as u64 }
+    (VAL_F64,true,VAL_I64)  => {f64::from_bits(src as u64) as i64 as u64 }
+    // float -> float
+    (VAL_F32,false,VAL_F64)  => {(f32::from_bits(src as u32) as f64).to_bits() as u64 }
+    (VAL_F64,false,VAL_F32)  => {(f64::from_bits(src as u64) as f32).to_bits() as u64 }
+    _ => panic!("unsupported val_types for {} conversion {} {}",
+        if signed {"signed"}else{"unsigned"},
+    src_type,dst_type)
+  }
+}
+
 
 fn run(program: &mut Program) {
     let mut ip: usize = 0;
@@ -461,27 +561,155 @@ fn run(program: &mut Program) {
           let res = op_or(stack_get(&val_stack,src1 as usize + 1),op_data as i64 as u64,val_type);
           stack_set(res,&mut val_stack,dst as usize)
         }
-        0x50 => { // cmp [dst:4][src1:4][src2:4][cmp-type:3][val-type:3]
+        0x50 => { // binary-op [dst:4][src1:4][src2:4][bin_op:4][cmp-type:3][val-type:3]
           let dst = op_data & 0xf;
           let op_data = op_data >> 4;
           let src1 = op_data & 0xf;
           let op_data = op_data >> 4;
           let src2 = op_data & 0xf;
           let op_data = op_data >> 4;
-          let cmp_type = op_data & 0x7; // eq ne . . lt le ult ule
-          let op_data = op_data >> 3;
+          let bin_op = op_data & 0xf;
+          const OP_CMP: u32 = 0;
+          const OP_ADD: u32 = 1;
+          const OP_SUB: u32 = 2;
+          const OP_MUL: u32 = 3;
+          const OP_AND: u32 = 8;
+          const OP_OR: u32 = 9;
+          const OP_XOR: u32 = 10;
+          const OP_SHL: u32 = 11;
+          const OP_LSHR: u32 = 12;
+          const OP_ASHR: u32 = 13;
+          let op_data = op_data >> 4;
           let val_type = op_data & 0x7; // i8 i16 i32 i64 . f16 f32 f64
-          let res = op_cmp(
-            stack_get(&val_stack,src1 as usize + 1),
-            stack_get(&val_stack,src2 as usize + 1),
-          cmp_type,val_type);
+          let op_data = op_data >> 3;
+          let res = match bin_op {
+            OP_CMP => {
+              let cmp_type = op_data & 0x7; // eq ne . . lt le ult ule
+              op_cmp(
+                stack_get(&val_stack,src1 as usize + 1),
+                stack_get(&val_stack,src2 as usize + 1),
+              cmp_type,val_type)
+            }
+            OP_ADD => {
+              op_add(
+                stack_get(&val_stack,src1 as usize + 1),
+                stack_get(&val_stack,src2 as usize + 1),
+              val_type)
+            }
+            OP_SUB => {
+              op_sub(
+                stack_get(&val_stack,src1 as usize + 1),
+                stack_get(&val_stack,src2 as usize + 1),
+              val_type)
+            }
+            OP_MUL => {
+              op_mul(
+                stack_get(&val_stack,src1 as usize + 1),
+                stack_get(&val_stack,src2 as usize + 1),
+              val_type)
+            }
+            // TODO: div/rem/udiv/urem
+            OP_AND => {
+              op_and(
+                stack_get(&val_stack,src1 as usize + 1),
+                stack_get(&val_stack,src2 as usize + 1),
+              val_type)
+            }
+            OP_OR => {
+              op_or(
+                stack_get(&val_stack,src1 as usize + 1),
+                stack_get(&val_stack,src2 as usize + 1),
+              val_type)
+            }
+            OP_XOR => {
+              op_xor(
+                stack_get(&val_stack,src1 as usize + 1),
+                stack_get(&val_stack,src2 as usize + 1),
+              val_type)
+            }
+            OP_SHL => {
+              op_shl(
+                stack_get(&val_stack,src1 as usize + 1),
+                stack_get(&val_stack,src2 as usize + 1),
+              val_type)
+            }
+            OP_LSHR => {
+              op_lshr(
+                stack_get(&val_stack,src1 as usize + 1),
+                stack_get(&val_stack,src2 as usize + 1),
+              val_type)
+            }
+            OP_ASHR => {
+              op_ashr(
+                stack_get(&val_stack,src1 as usize + 1),
+                stack_get(&val_stack,src2 as usize + 1),
+              val_type)
+            }
+            _ => {panic!("unknown binary operation: {}",bin_op)}
+          };
           stack_set(res,&mut val_stack,dst as usize)
         }
-        // neg add sub mul   divrem[dst1:4][dst2:4][arg1:4][arg2:4][val_type:3][mode:3]
-        // shli shri ashri
-        // not and or xor shl shr ashr
-        // op-unary [dst:4][src:4][op-code:4][val-type:3][data:9] -> neg,not,shli,shri,ashri,cvt
-        // cvt [src-type:4][dst-type:4][src:4][dst:4]
+        0x51 => { // unary-op [dst:4][src:4][un_op:4][val-type:3]
+          let dst = op_data & 0xf;
+          let op_data = op_data >> 4;
+          let src = op_data & 0xf;
+          let op_data = op_data >> 4;
+          let un_op = op_data & 0xf;
+          let op_data = op_data >> 4;
+          let val_type = op_data & 0x7; // i8 i16 i32 i64 . f16 f32 f64
+          let op_data = op_data >> 3;
+          const OP_NEG: u32 = 0;
+          const OP_NOT: u32 = 1;
+          const OP_SHLI: u32 = 2;
+          const OP_LSHRI: u32 = 3;
+          const OP_ASHRI: u32 = 4;
+          let res = match un_op {
+            OP_NEG => {
+              op_sub(
+                0,
+                stack_get(&val_stack,src as usize + 1),
+              val_type)
+            }
+            OP_NOT => {
+              op_xor(
+                stack_get(&val_stack,src as usize + 1),
+                !0,
+              val_type)
+            }
+            OP_SHLI => {
+              op_shl(
+                stack_get(&val_stack,src as usize + 1),
+                op_data as u64,
+              val_type)
+            }
+            OP_LSHRI => {
+              op_lshr(
+                stack_get(&val_stack,src as usize + 1),
+                op_data as u64,
+              val_type)
+            }
+            OP_ASHRI => {
+              op_ashr(
+                stack_get(&val_stack,src as usize + 1),
+                op_data as u64,
+              val_type)
+            }
+            _ => {panic!("unknown unary operation: {}",un_op)}
+          };
+          stack_set(res,&mut val_stack,dst as usize)
+        }
+        0x52 => { // cvt [dst:4][src:4][src-type:4][dst-type:4]
+          let dst = op_data & 0xf;
+          let op_data = op_data >> 4;
+          let src = op_data & 0xf;
+          let op_data = op_data >> 4;
+          let signed = (op_data & 0x8) != 0;
+          let dst_type = op_data & 0x7;
+          let op_data = op_data >> 4;
+          let src_type = op_data & 0x7;
+          let res = op_cvt(stack_get(&val_stack,src as usize + 1),src_type,signed,dst_type);
+          stack_set(res,&mut val_stack,dst as usize)
+        }
         _ => panic!("unknown op-code 0x{:x}",op_type),
       }
     }
