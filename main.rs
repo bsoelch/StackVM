@@ -85,8 +85,123 @@ fn buffer_set(_memory: &mut [u8],_addr: usize,_src: &[u8]) {
   panic!("unimplemented: buffer_set");
 }
 
-fn op_cmp(_arg1: u64,_arg2: u64,_cmp_type: u32,_val_type: u32) -> u64 {
-  panic!("unimplemented: op_cmp");
+const VAL_I8: u32 = 0;
+const VAL_I16: u32 = 1;
+const VAL_I32: u32 = 2;
+const VAL_I64: u32 = 3;
+const VAL_FLOAT: u32 = 4;
+const VAL_F16: u32 = 5;
+const VAL_F32: u32 = 6;
+const VAL_F64: u32 = 7;
+const CMP_EQ: u32 = 0;
+const CMP_NE: u32 = 1;
+// CMP_2,CMP_3
+const CMP_LT: u32 = 4;
+const CMP_LE: u32 = 5;
+const CMP_ULT: u32 = 6;
+const CMP_ULE: u32 = 7;
+
+// TODO? support operations on f16
+fn op_cmp(arg1: u64,arg2: u64, cmp_type: u32,val_type: u32) -> u64 {
+  match (val_type,cmp_type) {
+    (VAL_I8, CMP_EQ)  => {((arg1 as u8) == (arg2 as u8)) as u64 }
+    (VAL_I16, CMP_EQ) => {((arg1 as u16) == (arg2 as u16)) as u64 }
+    (VAL_I32, CMP_EQ) => {((arg1 as u32) == (arg2 as u32)) as u64 }
+    (VAL_I64, CMP_EQ) => {(arg1 == arg2) as u64 }
+    (VAL_F32, CMP_EQ) => {(f32::from_bits(arg1 as u32) == f32::from_bits(arg2 as u32)) as u64 }
+    (VAL_F64, CMP_EQ) => {(f64::from_bits(arg1) == f64::from_bits(arg2)) as u64 }
+    (VAL_I8, CMP_NE)  => {((arg1 as u8) != (arg2 as u8)) as u64 }
+    (VAL_I16, CMP_NE) => {((arg1 as u16) != (arg2 as u16)) as u64 }
+    (VAL_I32, CMP_NE) => {((arg1 as u32) != (arg2 as u32)) as u64 }
+    (VAL_I64, CMP_NE) => {(arg1 != arg2) as u64 }
+    (VAL_F32, CMP_NE) => {(f32::from_bits(arg1 as u32) != f32::from_bits(arg2 as u32)) as u64 }
+    (VAL_F64, CMP_NE) => {(f64::from_bits(arg1) != f64::from_bits(arg2)) as u64 }
+    (VAL_I8, CMP_LT)  => {((arg1 as i8) < (arg2 as i8)) as u64 }
+    (VAL_I16, CMP_LT) => {((arg1 as i16) < (arg2 as i16)) as u64 }
+    (VAL_I32, CMP_LT) => {((arg1 as i32) < (arg2 as i32)) as u64 }
+    (VAL_I64, CMP_LT) => {((arg1 as i64) < (arg2 as i64)) as u64 }
+    (VAL_F32, CMP_LT) => {(f32::from_bits(arg1 as u32) < f32::from_bits(arg2 as u32)) as u64 }
+    (VAL_F64, CMP_LT) => {(f64::from_bits(arg1) < f64::from_bits(arg2)) as u64 }
+    (VAL_I8, CMP_LE)  => {((arg1 as i8) <= (arg2 as i8)) as u64 }
+    (VAL_I16, CMP_LE) => {((arg1 as i16) <= (arg2 as i16)) as u64 }
+    (VAL_I32, CMP_LE) => {((arg1 as i32) <= (arg2 as i32)) as u64 }
+    (VAL_I64, CMP_LE) => {((arg1 as i64) <= (arg2 as i64)) as u64 }
+    (VAL_F32, CMP_LE) => {(f32::from_bits(arg1 as u32) <= f32::from_bits(arg2 as u32)) as u64 }
+    (VAL_F64, CMP_LE) => {(f64::from_bits(arg1) <= f64::from_bits(arg2)) as u64 }
+    (VAL_I8, CMP_ULT)  => {((arg1 as u8) < (arg2 as u8)) as u64 }
+    (VAL_I16, CMP_ULT) => {((arg1 as u16) < (arg2 as u16)) as u64 }
+    (VAL_I32, CMP_ULT) => {((arg1 as u32) < (arg2 as u32)) as u64 }
+    (VAL_I64, CMP_ULT) => {(arg1 < arg2) as u64 }
+    (VAL_F32, CMP_ULT) => {(!(f32::from_bits(arg1 as u32) >= f32::from_bits(arg2 as u32))) as u64 }
+    (VAL_F64, CMP_ULT) => {(!(f64::from_bits(arg1) >= f64::from_bits(arg2))) as u64 }
+    (VAL_I8, CMP_ULE)  => {((arg1 as u8) <= (arg2 as u8)) as u64 }
+    (VAL_I16, CMP_ULE) => {((arg1 as u16) <= (arg2 as u16)) as u64 }
+    (VAL_I32, CMP_ULE) => {((arg1 as u32) <= (arg2 as u32)) as u64 }
+    (VAL_I64, CMP_ULE) => {(arg1 <= arg2) as u64 }
+    (VAL_F32, CMP_ULE) => {(!(f32::from_bits(arg1 as u32) > f32::from_bits(arg2 as u32))) as u64 }
+    (VAL_F64, CMP_ULE) => {(!(f64::from_bits(arg1) > f64::from_bits(arg2))) as u64 }
+    _ => panic!("unsupported combination of val_type and compare_type: ({},{})",val_type,cmp_type)
+  }
+}
+fn op_add(arg1: u64,arg2: u64,val_type: u32) -> u64 {
+  match val_type {
+    VAL_I8  => {((arg1 as u8) + (arg2 as u8)) as u64 }
+    VAL_I16 => {((arg1 as u16) + (arg2 as u16)) as u64 }
+    VAL_I32  => {((arg1 as u32) + (arg2 as u32)) as u64 }
+    VAL_I64 => { arg1 + arg2 }
+    VAL_F32 => {(f32::from_bits(arg1 as u32) + f32::from_bits(arg2 as u32)).to_bits() as u64 }
+    VAL_F64 => {(f64::from_bits(arg1) + f64::from_bits(arg2)).to_bits()}
+    _ => panic!("unsupported val_type for add: {}",val_type)
+  }
+}
+fn op_sub(arg1: u64,arg2: u64,val_type: u32) -> u64 {
+  match val_type {
+    VAL_I8  => {((arg1 as u8) - (arg2 as u8)) as u64 }
+    VAL_I16 => {((arg1 as u16) - (arg2 as u16)) as u64 }
+    VAL_I32  => {((arg1 as u32) - (arg2 as u32)) as u64 }
+    VAL_I64 => { arg1 - arg2 }
+    VAL_F32 => {(f32::from_bits(arg1 as u32) - f32::from_bits(arg2 as u32)).to_bits() as u64 }
+    VAL_F64 => {(f64::from_bits(arg1) - f64::from_bits(arg2)).to_bits()}
+    _ => panic!("unsupported val_type for sub: {}",val_type)
+  }
+}
+fn op_mul(arg1: u64,arg2: u64,val_type: u32) -> u64 {
+  match val_type {
+    VAL_I8  => {((arg1 as u8) * (arg2 as u8)) as u64 }
+    VAL_I16 => {((arg1 as u16) * (arg2 as u16)) as u64 }
+    VAL_I32  => {((arg1 as u32) * (arg2 as u32)) as u64 }
+    VAL_I64 => { arg1 * arg2 }
+    VAL_F32 => {(f32::from_bits(arg1 as u32) * f32::from_bits(arg2 as u32)).to_bits() as u64 }
+    VAL_F64 => {(f64::from_bits(arg1) * f64::from_bits(arg2)).to_bits()}
+    _ => panic!("unsupported val_type for mul: {}",val_type)
+  }
+}
+fn op_and(arg1: u64,arg2: u64,val_type: u32) -> u64 {
+  match val_type {
+    VAL_I8  => {((arg1 as u8) & (arg2 as u8)) as u64 }
+    VAL_I16 => {((arg1 as u16) & (arg2 as u16)) as u64 }
+    VAL_I32  => {((arg1 as u32) & (arg2 as u32)) as u64 }
+    VAL_I64 => { arg1 & arg2 }
+    _ => panic!("unsupported val_type for and: {}",val_type)
+  }
+}
+fn op_or(arg1: u64,arg2: u64,val_type: u32) -> u64 {
+  match val_type {
+    VAL_I8  => {((arg1 as u8) | (arg2 as u8)) as u64 }
+    VAL_I16 => {((arg1 as u16) | (arg2 as u16)) as u64 }
+    VAL_I32  => {((arg1 as u32) | (arg2 as u32)) as u64 }
+    VAL_I64 => { arg1 | arg2 }
+    _ => panic!("unsupported val_type for or: {}",val_type)
+  }
+}
+fn op_xor(arg1: u64,arg2: u64,val_type: u32) -> u64 {
+  match val_type {
+    VAL_I8  => {((arg1 as u8) ^ (arg2 as u8)) as u64 }
+    VAL_I16 => {((arg1 as u16) ^ (arg2 as u16)) as u64 }
+    VAL_I32  => {((arg1 as u32) ^ (arg2 as u32)) as u64 }
+    VAL_I64 => { arg1 ^ arg2 }
+    _ => panic!("unsupported val_type for xor: {}",val_type)
+  }
 }
 
 fn run(program: &mut Program) {
@@ -211,7 +326,7 @@ fn run(program: &mut Program) {
           let jump_type = op_type & 0x7;
           let long_jump = (op_type & 0x8) != 0;
           // signed for relative jump, unsigned for absolute jump
-          let mut op_data = if jump_type <= JUMP_TYPE_CALL_ABS {
+          let mut op_data = if long_jump || jump_type <= JUMP_TYPE_CALL_ABS {
             op_data as i32 // unsigned immediate (high bit of op_data is zero)
           } else {
             (op as i32) >> base_shift // signed immediate (keep high bit of op)
@@ -271,7 +386,8 @@ fn run(program: &mut Program) {
             _ => panic!("unknown jump-type {}",jump_type)
           }
         }
-        0x30 => { // cmpi [dst:4][src1:4][swap: 1][cmp-type:3][val-type:2][imm:10]
+        0x30..=0x37 => { // cmpi[val-type:3] [dst:4][src1:4][swap: 1][cmp-type:3][imm:12]
+          let val_type = (op_type & 0x7) as u32; // i8 i16 i32 i64 . f16 f32 f64
           let op_data = (op as i32) >> base_shift;
           let dst = op_data & 0xf;
           let op_data = op_data >> 4;
@@ -279,9 +395,13 @@ fn run(program: &mut Program) {
           let op_data = op_data >> 4;
           let swap_args = (op_data & 0x8) != 0;
           let cmp_type = (op_data & 0x7) as u32; // eq ne . . lt le ult ule
-          let op_data = op_data >> 4;
-          let val_type = (op_data & 0x3) as u32; // i8 i16 i32 i64
-          let op_data = op_data >> 2; // 14
+          let mut op_data = op_data >> 4;
+          if val_type >= VAL_FLOAT { // float -> immediate in high bits
+            let bit_count = 1 << (val_type&0x3);
+            if bit_count > 12 {
+                op_data <<= bit_count - 12;
+            }
+          }
           let res = if swap_args {
             op_cmp(op_data as i64 as u64,stack_get(&val_stack,src1 as usize + 1),cmp_type as u32,val_type)
           } else {
@@ -289,7 +409,59 @@ fn run(program: &mut Program) {
           };
           stack_set(res,&mut val_stack,dst as usize)
         }
-        0x31 => { // cmp [dst:4][src1:4][src2:4][cmp-type:3][val-type:3]
+        0x38..=0x3f => { // addi[val-type:3] [dst:4][src1:4][imm:16]
+          let val_type = op_type & 0x7; // i8 i16 i32 i64 . f16 f32 f64
+          let op_data = (op as i32) >> base_shift;
+          let dst = op_data & 0xf;
+          let op_data = op_data >> 4;
+          let src1 = op_data & 0xf;
+          let mut op_data = op_data >> 4;
+          if val_type >= VAL_FLOAT { // float -> immediate in high bits
+            let bit_count = 1 << (val_type&0x3);
+            if bit_count > 16 {
+                op_data <<= bit_count - 16;
+            }
+          }
+          let res = op_add(stack_get(&val_stack,src1 as usize + 1),op_data as i64 as u64,val_type);
+          stack_set(res,&mut val_stack,dst as usize)
+        }
+        0x40..=0x47 => { // muli[val-type:3] [dst:4][src1:4][imm:16]
+          let val_type = op_type & 0x7; // i8 i16 i32 i64 . f16 f32 f64
+          let op_data = (op as i32) >> base_shift;
+          let dst = op_data & 0xf;
+          let op_data = op_data >> 4;
+          let src1 = op_data & 0xf;
+          let mut op_data = op_data >> 4;
+          if val_type >= VAL_FLOAT { // float -> immediate in high bits
+            let bit_count = 1 << (val_type&0x3);
+            if bit_count > 16 {
+                op_data <<= bit_count - 16;
+            }
+          }
+          let res = op_mul(stack_get(&val_stack,src1 as usize + 1),op_data as i64 as u64,val_type);
+          stack_set(res,&mut val_stack,dst as usize)
+        }
+        0x48..=0x4b => { // andi[val-type:2] [dst:4][src1:4][imm:16]
+          let val_type = op_type & 0x3; // i8 i16 i32 i64
+          let op_data = (op as i32) >> base_shift;
+          let dst = op_data & 0xf;
+          let op_data = op_data >> 4;
+          let src1 = op_data & 0xf;
+          let op_data = op_data >> 4;
+          let res = op_and(stack_get(&val_stack,src1 as usize + 1),op_data as i64 as u64,val_type);
+          stack_set(res,&mut val_stack,dst as usize)
+        }
+        0x4c..=0x4f => { // ori[val-type:2] [dst:4][src1:4][imm:16]
+          let val_type = op_type & 0x3; // i8 i16 i32 i64
+          let op_data = (op as i32) >> base_shift;
+          let dst = op_data & 0xf;
+          let op_data = op_data >> 4;
+          let src1 = op_data & 0xf;
+          let op_data = op_data >> 4;
+          let res = op_or(stack_get(&val_stack,src1 as usize + 1),op_data as i64 as u64,val_type);
+          stack_set(res,&mut val_stack,dst as usize)
+        }
+        0x50 => { // cmp [dst:4][src1:4][src2:4][cmp-type:3][val-type:3]
           let dst = op_data & 0xf;
           let op_data = op_data >> 4;
           let src1 = op_data & 0xf;
@@ -305,10 +477,10 @@ fn run(program: &mut Program) {
           cmp_type,val_type);
           stack_set(res,&mut val_stack,dst as usize)
         }
-        // addi muli
-        // neg add sub mul div rem udiv urem
-        // andi ori shli shri ashri
+        // neg add sub mul   divrem[dst1:4][dst2:4][arg1:4][arg2:4][val_type:3][mode:3]
+        // shli shri ashri
         // not and or xor shl shr ashr
+        // op-unary [dst:4][src:4][op-code:4][val-type:3][data:9] -> neg,not,shli,shri,ashri,cvt
         // cvt [src-type:4][dst-type:4][src:4][dst:4]
         _ => panic!("unknown op-code 0x{:x}",op_type),
       }
