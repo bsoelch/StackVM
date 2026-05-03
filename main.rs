@@ -399,20 +399,6 @@ fn run(program: &mut Program) {
           }
         }
         // 0x14-0x1f
-        // stack-mod [drop:4][count:24]
-        // stack-mod [removeAt:4][count:4] [loc:16]
-        // stack-mod [remove2:4][count1:2][count2:2] [loc1:8][loc2:8]
-        // stack-mod [remove3:4] [loc1:6][loc2:6][loc3:6]
-        // stack-mod [insert:4] [src:4] [dst:16]
-        // stack-mod [insert-drop:4] [src:4] [dst:16]
-        // stack-mod [extract:4] [dst:4] [src:16]
-        // stack-mod [copyFrom:4][dst:4] [src:16]
-        // stack-mod [copyTo:4][src:4] [dst:16]
-        // stack-mod [copy2:4][drop:4] [A1][B1][A2][B2]
-        // stack-mod [swap:4]  [A:4][B:16]
-        // stack-mod [swap2:4] [A1:4][B1:4][A2:6][B2:6]
-        // copy3 [A1][B1][C1][A2][B2][C2]
-        // swap3 [A1][B1][C1][A2][B2][C2]
         0x20..=0x2f => { // jump/call[offset:24s], ret, jz/jnz [src:4][offset:20s]
           const JUMP_TYPE_JMP_ABS: u32 = 0;
           const JUMP_TYPE_CALL_ABS: u32 = 1;
@@ -561,6 +547,7 @@ fn run(program: &mut Program) {
           let res = op_or(stack_get(&val_stack,src1 as usize + 1),op_data as i64 as u64,val_type);
           stack_set(res,&mut val_stack,dst as usize)
         }
+        // TODO? split binary-op into one op-code per operation
         0x50 => { // binary-op [dst:4][src1:4][src2:4][bin_op:4][cmp-type:3][val-type:3]
           let dst = op_data & 0xf;
           let op_data = op_data >> 4;
@@ -709,6 +696,168 @@ fn run(program: &mut Program) {
           let src_type = op_data & 0x7;
           let res = op_cvt(stack_get(&val_stack,src as usize + 1),src_type,signed,dst_type);
           stack_set(res,&mut val_stack,dst as usize)
+        }
+        0x80 => { // drop [imm:24]
+            let count = op_data as usize;
+            if count > val_stack.len() { panic!("stack underflow");}
+            let new_length = val_stack.len() - count;
+            val_stack.truncate(new_length);
+        }
+        0x81 => { // removeAt [count:8][loc:16]
+            let count = (op_data & 0xff) as usize;
+            let loc = (op_data >> 8) as usize + 1;
+            if loc > val_stack.len() || count > loc { panic!("stack underflow");}
+            let start = val_stack.len() - loc;
+            let end = start + count;
+            val_stack.drain(start..end);
+        }
+        0x82 => { // remove2 [loc1:8][loc2:8]
+            let loc1 = (op_data & 0xff) as usize + 1;
+            let loc2 = ((op_data >> 8) & 0xff) as usize + 1;
+            if loc1 > val_stack.len() { panic!("stack underflow");}
+            val_stack.remove(val_stack.len() - loc1);
+            if loc2 > val_stack.len() { panic!("stack underflow");}
+            val_stack.remove(val_stack.len() - loc2);
+        }
+        0x83 => { // remove3 [loc1:8][loc2:8][loc3:8]
+            let loc1 = (op_data & 0xff) as usize + 1;
+            let op_data = op_data >> 8;
+            let loc2 = (op_data & 0xff) as usize + 1;
+            let loc3 = ((op_data >> 8) & 0xff) as usize + 1;
+            if loc1 > val_stack.len() { panic!("stack underflow");}
+            val_stack.remove(val_stack.len() - loc1);
+            if loc2 > val_stack.len() { panic!("stack underflow");}
+            val_stack.remove(val_stack.len() - loc2);
+            if loc3 > val_stack.len() { panic!("stack underflow");}
+            val_stack.remove(val_stack.len() - loc3);
+        }
+        0x84 => { // insert [src:4][dst:20]
+            let src = (op_data & 0xf) as usize + 1;
+            let dst = (op_data >> 4) as usize + 1;
+            let val = stack_get(&val_stack,src);
+            if dst > val_stack.len() { panic!("stack underflow");}
+            val_stack.insert(dst,val);
+        }
+        0x85 => { // extract [dst:4][src:20]
+            let dst = (op_data & 0xf) as usize;
+            let src = (op_data >> 4) as usize;
+            if src > val_stack.len() { panic!("stack underflow");}
+            let val = val_stack.remove(src);
+            stack_set(val,&mut val_stack,dst);
+        }
+        0x87 => { // copy-from [dst:4][src:20]
+            let dst = op_data & 0xf;
+            let src = op_data >> 4;
+            let val = stack_get(&val_stack,(src as usize)+1);
+            stack_set(val,&mut val_stack,dst as usize);
+        }
+        0x88 => { // copy-to [src:4][dst:20]
+            let src = op_data & 0xf;
+            let dst = op_data >> 4;
+            let val = stack_get(&val_stack,(src as usize)+1);
+            stack_set(val,&mut val_stack,dst as usize);
+        }
+        0x89 => { // copy [discard:4][src:10][dst:10]
+            let to_drop = (op_data & 0xf) as usize;
+            let op_data = op_data >> 4;
+            let src = (op_data & 0x3ff) as usize + 1;
+            let dst = (op_data >> 10) as usize;
+            let val = stack_get(&val_stack,src);
+            if to_drop > val_stack.len() { panic!("stack underflow");}
+            let new_length = val_stack.len() - to_drop;
+            val_stack.truncate(new_length);
+            stack_set(val,&mut val_stack,dst);
+        }
+        0x8a => { // copy2 [discard:4][src1:4][src2:4][dst1:4][dst2:4]
+            let to_drop = (op_data & 0xf) as usize;
+            let op_data = op_data >> 4;
+            let src1 = (op_data & 0xf) as usize + 1;
+            let op_data = op_data >> 4;
+            let src2 = (op_data & 0xf) as usize + 1;
+            let op_data = op_data >> 4;
+            let dst1 = (op_data & 0xf) as usize;
+            let dst2 = (op_data >> 4) as usize;
+            let val1 = stack_get(&val_stack,src1);
+            let val2 = stack_get(&val_stack,src2);
+            if to_drop > val_stack.len() { panic!("stack underflow");}
+            let new_length = val_stack.len() - to_drop;
+            val_stack.truncate(new_length);
+            stack_set(val1,&mut val_stack,dst1);
+            stack_set(val2,&mut val_stack,dst2);
+        }
+        0x8b => { // copy3 [src1:4][src2:4][src3:4][dst1:4][dst2:4][dst3:4]
+            let src1 = op_data & 0xf;
+            let op_data = op_data >> 4;
+            let src2 = op_data & 0xf;
+            let op_data = op_data >> 4;
+            let src3 = op_data & 0xf;
+            let op_data = op_data >> 4;
+            let dst1 = op_data & 0xf;
+            let op_data = op_data >> 4;
+            let dst2 = op_data & 0xf;
+            let dst3 = op_data >> 4;
+            let val1 = stack_get(&val_stack,(src1 as usize)+1);
+            let val2 = stack_get(&val_stack,(src2 as usize)+1);
+            let val3 = stack_get(&val_stack,(src3 as usize)+1);
+            stack_set(val1,&mut val_stack,dst1 as usize);
+            stack_set(val2,&mut val_stack,dst2 as usize);
+            stack_set(val3,&mut val_stack,dst3 as usize);
+        }
+        0x8c => { // swap [A:8][B:8]
+            let a1 = op_data & 0xff;
+            let b1 = (op_data >> 8) & 0xff;
+            let val1 = stack_get(&val_stack,(a1 as usize)+1);
+            let val2 = stack_get(&val_stack,(b1 as usize)+1);
+            stack_set(val1,&mut val_stack,(b1 as usize)+1);
+            stack_set(val2,&mut val_stack,(a1 as usize)+1);
+        }
+        0x8d => { // deep-swap [A:4][B:20]
+            let a1 = op_data & 0xf;
+            let b1 = op_data >> 4;
+            let val1 = stack_get(&val_stack,(a1 as usize)+1);
+            let val2 = stack_get(&val_stack,(b1 as usize)+1);
+            stack_set(val1,&mut val_stack,(b1 as usize)+1);
+            stack_set(val2,&mut val_stack,(a1 as usize)+1);
+        }
+        0x8e => { // swap2 [a1:6][a2:6][b1:6][b2:6]
+            let a1 = op_data & 0x3f;
+            let op_data = op_data >> 6;
+            let a2 = op_data & 0x3f;
+            let op_data = op_data >> 6;
+            let b1 = op_data & 0x3f;
+            let b2 = op_data >> 6;
+            let val1 = stack_get(&val_stack,(a1 as usize)+1);
+            let val2 = stack_get(&val_stack,(a2 as usize)+1);
+            let val3 = stack_get(&val_stack,(b1 as usize)+1);
+            let val4 = stack_get(&val_stack,(b2 as usize)+1);
+            stack_set(val1,&mut val_stack,(b1 as usize)+1);
+            stack_set(val2,&mut val_stack,(b2 as usize)+1);
+            stack_set(val3,&mut val_stack,(a1 as usize)+1);
+            stack_set(val4,&mut val_stack,(a2 as usize)+1);
+        }
+        0x8f => { // swap3 [A1:4][B1:4][C1:4][A2:4][B2:4][C2:4]
+            let a1 = op_data & 0xf;
+            let op_data = op_data >> 4;
+            let a2 = op_data & 0xf;
+            let op_data = op_data >> 4;
+            let a3 = op_data & 0xf;
+            let op_data = op_data >> 4;
+            let b1 = op_data & 0xf;
+            let op_data = op_data >> 4;
+            let b2 = op_data & 0xf;
+            let b3 = op_data >> 4;
+            let val1 = stack_get(&val_stack,(a1 as usize)+1);
+            let val2 = stack_get(&val_stack,(a2 as usize)+1);
+            let val3 = stack_get(&val_stack,(a3 as usize)+1);
+            let val4 = stack_get(&val_stack,(b1 as usize)+1);
+            let val5 = stack_get(&val_stack,(b2 as usize)+1);
+            let val6 = stack_get(&val_stack,(a3 as usize)+1);
+            stack_set(val1,&mut val_stack,(b1 as usize)+1);
+            stack_set(val2,&mut val_stack,(b2 as usize)+1);
+            stack_set(val3,&mut val_stack,(b3 as usize)+1);
+            stack_set(val4,&mut val_stack,(a1 as usize)+1);
+            stack_set(val5,&mut val_stack,(a2 as usize)+1);
+            stack_set(val6,&mut val_stack,(a3 as usize)+1);
         }
         _ => panic!("unknown op-code 0x{:x}",op_type),
       }

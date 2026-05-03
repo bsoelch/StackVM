@@ -5,3 +5,4 @@ main
 *.bc
 *.ll
 *.zip
+src.txt
