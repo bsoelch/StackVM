@@ -1,6 +1,7 @@
 use std::fs::File;
 use std::io::Read;
 use std::io;
+use std::ptr;
 
 fn u64_as_bytes_mut(ints: &mut [u64]) -> &mut[u8] {
   unsafe {
@@ -16,6 +17,13 @@ fn u64_as_bytes(ints: &[u64]) -> &[u8] {
     std::slice::from_raw_parts(ptr, len)
   }
 }
+fn u64_as_bytes_box(ints: Box<[u64]>) -> Box<[u8]> {
+  unsafe {
+    let byte_count = ints.len()*8;
+    let ptr = Box::into_raw(ints) as *mut u8;
+    Box::from_raw(ptr::slice_from_raw_parts_mut(ptr, byte_count))
+  }
+}
 fn u32_as_bytes_mut(ints: &mut [u32]) -> &mut[u8] {
   unsafe {
     let ptr = ints.as_ptr() as *mut u8;
@@ -24,23 +32,119 @@ fn u32_as_bytes_mut(ints: &mut [u32]) -> &mut[u8] {
   }
 }
 
-// use high two bits as tag
-const PTR_TYPE_MASK: u64 = 0xC000_0000_0000_0000;
-const PTR_VALUE_MASK: u64 = 0x3fff_ffff_ffff_ffff;
-const PTR_LOCAL: u64  = 0x0000_0000_0000_0000;
-const PTR_RODATA: u64 = 0x4000_0000_0000_0000;
-const PTR_RWDATA: u64 = 0x8000_0000_0000_0000;
-const PTR_HEAP: u64   = 0xC000_0000_0000_0000;
-fn local_addr_to_ptr(local_addr: usize) -> u64 {
-  if local_addr as u64 > PTR_VALUE_MASK {panic!("address outside allowed range");}
-  return local_addr as u64 | PTR_LOCAL;
+#[derive(Debug, Copy, Clone, PartialEq, Eq)]
+enum AllocationType { STATIC, DYNAMIC }
+#[derive(Debug, Clone, PartialEq)]
+struct Allocation {
+  start: u64,
+  data: Box<[u8]>,
+  readable: bool,
+  writeable: bool,
+  executable: bool,
+  allocation_type: AllocationType
+}
+struct AllocationNode {
+  nodes: Box<[TreeElement; 256]>,
+  count: u64
+}
+enum TreeElement{
+  Empty,
+  Leaf(Box<Allocation>),
+  Node(Box<AllocationNode>),
+}
+struct AllocationTree {
+  root: AllocationNode,
+  // TODO? caching for commonly accessed addressed (+ special-casing for code access)
+}
+impl AllocationNode{
+  fn new() -> Self {
+    AllocationNode{
+      nodes: Box::new([const{TreeElement::Empty}; 256]),
+      count: 0
+    }
+  }
+}
+impl AllocationTree{
+  fn new() -> Self {
+    AllocationTree{
+      root: AllocationNode::new()
+    }
+  }
+}
+fn new_fixed_allocation_rec(node: &mut AllocationNode,allocation: &Allocation,key_shift: u32) {
+  let key = (allocation.start >> key_shift) & 0xff;
+  match &mut node.nodes[key as usize] {
+    TreeElement::Empty => { // TODO: does this copy the value twice?
+      node.nodes[key as usize] = TreeElement::Leaf(Box::new(allocation.clone()));
+    },
+    TreeElement::Leaf(prev_alloc) => {
+      let prev_end = prev_alloc.start + (prev_alloc.data.len() as u64);
+      let alloc_end = allocation.start + (allocation.data.len() as u64);
+      if (prev_alloc.start <= allocation.start && prev_end > allocation.start) ||
+         (allocation.start <= prev_alloc.start && alloc_end > prev_alloc.start) {
+        panic!("overlapping allocations: {}:{} and {}:{}",prev_alloc.start,prev_end,allocation.start,alloc_end);
+      }
+      let mut sub_tree = Box::new(AllocationNode::new());
+      new_fixed_allocation_rec(&mut sub_tree,&prev_alloc,key_shift-8);
+      new_fixed_allocation_rec(&mut sub_tree,allocation,key_shift-8);
+      node.nodes[key as usize] = TreeElement::Node(sub_tree);
+    }
+    TreeElement::Node(sub_tree) => {
+      new_fixed_allocation_rec(sub_tree,allocation,key_shift-8);
+    }
+  }
+}
+fn new_fixed_allocation(tree: &mut AllocationTree,allocation: &Allocation) {
+  if (allocation.start % 16) != 0 {panic!("allocations have to be alligned to 16-bytes")}
+  if allocation.data.len() == 0 {return} // nothing to do
+  new_fixed_allocation_rec(&mut tree.root,allocation,56);
+}
+// TODO? mmap, mremap, munmap
+// TODO? memcopy, memset
+fn read_data_rec(node: &AllocationNode,addr: u64,dst: &mut[u8],key_shift: u32) {
+  let key = (addr >> key_shift) & 0xff;
+  match &node.nodes[key as usize] {
+    TreeElement::Empty => panic!("invalid memory access"),
+    TreeElement::Leaf(alloc) => {
+      if addr < alloc.start {panic!("invalid memory access")}
+      let local_addr = (addr - alloc.start) as usize;
+      if local_addr + dst.len() > alloc.data.len() {panic!("invalid memory access")}
+      if !alloc.readable {panic!("invalid memory access")}
+      dst.copy_from_slice(&alloc.data[local_addr..(local_addr+dst.len())])
+    }
+    TreeElement::Node(sub_tree) => {
+      read_data_rec(sub_tree,addr,dst,key_shift-8);
+    }
+  }
+}
+fn write_data_rec(node: &mut AllocationNode,addr: u64,src: &[u8],key_shift: u32) {
+  let key = (addr >> key_shift) & 0xff;
+  match &mut node.nodes[key as usize] {
+    TreeElement::Empty => panic!("invalid memory access"),
+    TreeElement::Leaf(alloc) => {
+      if addr < alloc.start {panic!("invalid memory access")}
+      let local_addr = (addr - alloc.start) as usize;
+      if local_addr + src.len() > alloc.data.len() {panic!("invalid memory access")}
+      if !alloc.writeable {panic!("invalid memory access")}
+      alloc.data[local_addr..(local_addr+src.len())].copy_from_slice(src)
+    }
+    TreeElement::Node(sub_tree) => {
+      write_data_rec(sub_tree,addr,src,key_shift-8);
+    }
+  }
+}
+fn read_data(tree: &AllocationTree,addr: u64,dst: &mut[u8]) {
+  read_data_rec(&tree.root,addr,dst,56);
+}
+fn write_data(tree: &mut AllocationTree,addr: u64,src: &[u8]) {
+  write_data_rec(&mut tree.root,addr,src,56);
 }
 
 struct Program{
-  code: Box<[u32]>,
+  code: Box<[u32]>, // TODO: move code to main memory space (+ caching of current code allocation)
   ip: u64,
-  rodata: Box<[u64]>,
-  rwdata: Box<[u64]>,
+  sp: u64,
+  allocations: AllocationTree,
 }
 fn stack_get(stack: &[u64],index: usize) -> u64 {
   if index == 0 || stack.len() < index {
@@ -59,11 +163,16 @@ fn stack_set(new_val: u64,stack: &mut Vec<u64>,index: usize) {
   let index = stack.len() - index;
   stack[index] = new_val;
 }
-fn buffer_get(_memory: &[u8],_addr: usize,_dst: &mut[u8]) {
-  panic!("unimplemented: buffer_get");
+fn prog_stack_pop(program: &mut Program) -> u64 {
+  let mut data: [u64; 1] = [0; 1];
+  read_data(&program.allocations,program.sp,u64_as_bytes_mut(&mut data));
+  program.sp += 8;
+  return data[0];
 }
-fn buffer_set(_memory: &mut [u8],_addr: usize,_src: &[u8]) {
-  panic!("unimplemented: buffer_set");
+fn prog_stack_push(program: &mut Program,value: u64) {
+  let data: [u64; 1] = [value; 1];
+  program.sp -= 8;
+  write_data(&mut program.allocations,program.sp,u64_as_bytes(&data));
 }
 
 const VAL_I8: u32 = 0;
@@ -312,8 +421,7 @@ fn cmp_type_name(cmp_type: u32) -> &'static str {
 fn run(program: &mut Program) {
     let mut ip: usize = program.ip as usize;
     let mut val_stack: Vec<u64> = Vec::new();
-    let mut prog_stack: Vec<u64> = Vec::new();
-    let mut rbp: usize = 0;
+    let mut rbp: u64 = 0;
     while ip < program.code.len() {
       let op = program.code[ip];
       ip += 1;
@@ -336,31 +444,30 @@ fn run(program: &mut Program) {
             stack_set(val,&mut val_stack,dst as usize);
           }
         }
-        0x8..=0xB => { // local-geti [dst:4][offset:*u]
+        0x8..=0xB => { // local-geti[size:2] [dst:4][offset:*u]
+          let size = 1 << (op_type&0x3); // 1,2,4,8
           let dst = op_data & 0xf;
-          let op_data = op_data >> 4;
-          let size = 1 << (op_type-8); // 1,2,4,8
-          let addr = rbp + op_data as usize;
+          let offset = (op_data >> 4) as u64;
+          let addr = rbp + offset;
           let mut buf: [u64;1] = [0;1];
-          buffer_get(u64_as_bytes(&prog_stack),addr,&mut u64_as_bytes_mut(&mut buf)[0..size]);
+          read_data(&program.allocations,addr,&mut u64_as_bytes_mut(&mut buf)[0..size]);
           stack_set(buf[0],&mut val_stack,dst as usize);
           if TRACE {println!("local-get.{} @{} #{}",size,dst,op_data);}
         }
-        0xC..=0xF => { // local-seti [src:4][offset:*u]
+        0xC..=0xF => { // local-seti[size:2] [src:4][offset:*u]
+          let size = 1 << (op_type&0x3); // 1,2,4,8
           let src = (op_data & 0xf) as usize + 1;
-          let op_data = op_data >> 4;
-          let size = 1 << (op_type-12); // 1,2,4,8
-          let addr = rbp + op_data as usize;
+          let offset = (op_data >> 4) as u64;
+          let addr = rbp + offset;
           let src_val = stack_get(&val_stack,src);
           let src_vals: [u64;1] = [src_val;1];
-          buffer_set(u64_as_bytes_mut(&mut prog_stack),addr,&u64_as_bytes(&src_vals)[0..size]);
+          write_data(&mut program.allocations,addr,&u64_as_bytes(&src_vals)[0..size]);
           if TRACE {println!("local-set.{} @{} #{}",size,src,op_data);}
         }
         0x10 => { // local-addr [dst:4][offset:*u]
-          let dst = op_data & 0xf;
-          let op_data = op_data >> 4;
-          let addr = local_addr_to_ptr(rbp + op_data as usize);
-          stack_set(addr,&mut val_stack,dst as usize);
+          let dst = (op_data & 0xf) as usize;
+          let offset = (op_data >> 4) as u64;
+          stack_set(rbp + offset,&mut val_stack,dst);
           if TRACE {println!("local-addr @{} #{}",dst,op_data);}
         }
         0x11 => { // local-alloc
@@ -379,8 +486,7 @@ fn run(program: &mut Program) {
           }
           let size = 1 << (op_data & 0x3); // 1,2,4,8
           op_data >>= 2;
-          let ptr = stack_get(&val_stack,dst as usize + 1) + (op_data as u64);
-          let addr = (ptr & PTR_VALUE_MASK) as usize;
+          let addr = stack_get(&val_stack,dst as usize + 1) + (op_data as u64);
           if TRACE {
             if is_set {
                 println!("ptr-set.{} @{} @{} #{}",size,dst,src,op_data);
@@ -388,31 +494,10 @@ fn run(program: &mut Program) {
                 println!("ptr-get.{} @{} #{}",size,dst,op_data);
             }
           }
-          match ptr & PTR_TYPE_MASK {
-            PTR_LOCAL => {
-              if is_set {
-                buffer_set(u64_as_bytes_mut(&mut prog_stack),addr,&u64_as_bytes(&buf)[0..size]);
-              } else {
-                buffer_get(u64_as_bytes(&prog_stack),addr,&mut u64_as_bytes_mut(&mut buf)[0..size]);
-              }
-            }
-            PTR_RODATA => {
-              if is_set {
-                panic!("cannot write to read-only address: 0x{:x}",ptr);
-              }
-              buffer_get(u64_as_bytes(&*program.rodata),addr,&mut u64_as_bytes_mut(&mut buf)[0..size]);
-            }
-            PTR_RWDATA => {
-              if is_set {
-                buffer_set(u64_as_bytes_mut(&mut* program.rwdata),addr,&u64_as_bytes(&buf)[0..size]);
-              } else {
-                buffer_get(u64_as_bytes(&*program.rwdata),addr,&mut u64_as_bytes_mut(&mut buf)[0..size]);
-              }
-            }
-            PTR_HEAP => {
-              panic!("heap pointers are not supported 0x{:x}",ptr)
-            }
-            _ => panic!("unknown pointer type 0x{:x}",ptr)
+          if is_set {
+            write_data(&mut program.allocations,addr,&u64_as_bytes(&buf)[0..size]);
+          } else {
+            read_data(&program.allocations,addr,&mut u64_as_bytes_mut(&mut buf)[0..size]);
           }
         }
         // 0x14-0x1f
@@ -464,8 +549,8 @@ fn run(program: &mut Program) {
               };
               if addr == -1 { // return (call to -1 is endless loop)
                 if TRACE {println!("ret");}
-                rbp = prog_stack.pop().unwrap() as usize;
-                ip = prog_stack.pop().unwrap() as usize;
+                rbp = prog_stack_pop(program);
+                ip = prog_stack_pop(program) as usize;
               } else {
                 if TRACE {
                     if jump_type == JUMP_TYPE_CALL_ABS {
@@ -474,9 +559,9 @@ fn run(program: &mut Program) {
                         println!("call #{}",addr);
                     }
                 }
-                prog_stack.push(ip as u64);
-                prog_stack.push(rbp as u64);
-                rbp = 8*prog_stack.len();
+                prog_stack_push(program,ip as u64);
+                prog_stack_push(program,rbp as u64);
+                rbp = program.sp;
                 ip = dst;
               }
             }
@@ -940,24 +1025,43 @@ fn run(program: &mut Program) {
 }
 
 fn load_file(file: &mut File) -> Option<Program> {
-  let mut header_buf: [u64; 8] = [0; 8]; // [version][start][code-addr][code-size][ro-addr][ro-data-size][rw-addr][rw-data-size]
+  let mut header_buf: [u64; 10] = [0; 10]; // [version][ip][code-addr][code-size][ro-addr][ro-data-size][rw-addr][rw-data-size][sp][stack-size]
   file.read_exact(u64_as_bytes_mut(&mut header_buf)).ok()?;
   let _version = header_buf[0];
   // sizes are given in chunks of 8bytes
-  let start_addr = header_buf[1];
+  let ip = header_buf[1];
   let _code_addr = header_buf[2]; // memory-address of code, currently unused
-  let code_size = 2*header_buf[3]; // convert u64 -> u32
-  let _ro_addr = header_buf[4]; // memory-address of ro-data, currently unused
-  let ro_data_size = header_buf[5];
-  let _rw_addr = header_buf[6]; // memory-address of rw-data, currently unused
-  let rw_data_size = header_buf[7];
-  let mut code_buffer = unsafe{ Box::<[u32]>::new_uninit_slice(code_size as usize).assume_init() };
+  let code_size = (2*header_buf[3]) as usize; // convert u64 -> u32
+  let ro_addr = header_buf[4]; // memory-address of ro-data, currently unused
+  let ro_data_size = header_buf[5] as usize;
+  let rw_addr = header_buf[6]; // memory-address of rw-data, currently unused
+  let rw_data_size = header_buf[7] as usize;
+  let sp = header_buf[8];
+  let stack_size = header_buf[9] as usize;
+  let mut code_buffer = unsafe{ Box::<[u32]>::new_uninit_slice(code_size).assume_init() };
   file.read_exact(u32_as_bytes_mut(&mut code_buffer)).ok()?;
-  let mut ro_buffer = unsafe{ Box::<[u64]>::new_uninit_slice(ro_data_size as usize).assume_init() };
+  let mut ro_buffer = unsafe{ Box::<[u64]>::new_uninit_slice(ro_data_size).assume_init() };
   file.read_exact(u64_as_bytes_mut(&mut ro_buffer)).ok()?;
-  let mut rw_buffer = unsafe{ Box::<[u64]>::new_uninit_slice(rw_data_size as usize).assume_init() };
+  let mut rw_buffer = unsafe{ Box::<[u64]>::new_uninit_slice(rw_data_size).assume_init() };
   file.read_exact(u64_as_bytes_mut(&mut rw_buffer)).ok()?;
-  return Some(Program{code: code_buffer,ip: start_addr,rodata: ro_buffer,rwdata: rw_buffer})
+  let mut allocations = AllocationTree::new();
+  new_fixed_allocation(&mut allocations,&Allocation{
+    start: ro_addr, data: u64_as_bytes_box(ro_buffer),
+    readable: true, writeable: false, executable:false,
+    allocation_type: AllocationType::STATIC,
+  });
+  new_fixed_allocation(&mut allocations,&Allocation{
+    start: rw_addr, data: u64_as_bytes_box(rw_buffer),
+    readable: true, writeable: true, executable:false,
+    allocation_type: AllocationType::STATIC,
+  });
+  let stack_data = u64_as_bytes_box(vec![0; stack_size].into_boxed_slice());
+  new_fixed_allocation(&mut allocations,&Allocation{
+    start: sp-((stack_size as u64)*8), data: stack_data,
+    readable: true, writeable: true, executable:false,
+    allocation_type: AllocationType::STATIC,
+  });
+  return Some(Program{code: code_buffer,ip: ip,sp: sp,allocations: allocations})
 }
 
 fn main() -> io::Result<()> {

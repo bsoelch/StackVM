@@ -32,16 +32,20 @@ def generate(out="in.cctbc"):
     start = 10
     print([hex(op)for op in ops])
     ## file-format
-    ## [version][start][code-addr][code-size][ro-addr][ro-data-size][rw-addr][rw-data-size]
+    ## [version][ip][code-addr][code-size][ro-addr][ro-data-size][rw-addr][rw-data-size][sp][stack-size]
+    stack_pointer = 0x1_0000_0000
+    stack_size = 0x10_0000
     with open(out,mode="wb") as f:
         writeU64(f,0) ## reserved
         writeU64(f,start)
-        writeU64(f,0) ## reserved
+        writeU64(f,0) ## code-addr
         writeU64(f,(len(ops)+1)//2)
-        writeU64(f,0) ## reserved
-        writeU64(f,0) ## no data
-        writeU64(f,0) ## reserved
-        writeU64(f,0) ## no data
+        writeU64(f,0) ## ro-data-addr
+        writeU64(f,0) ## ro-data-size
+        writeU64(f,0) ## rw-data-addr
+        writeU64(f,0) ## rw-data-addr
+        writeU64(f,stack_pointer) ## sp
+        writeU64(f,stack_size) ## stack-size
         writeU32s(f,ops) ## code
         if len(ops) & 1: ## padding
           writeU32(f,0)
