@@ -56,8 +56,10 @@ fn local_addr_to_ptr(local_addr: usize) -> u64 {
   return local_addr as u64 | PTR_LOCAL;
 }
 
+// TODO? unified address space (split virtual memory into chunks, resolve underlying address on memory read/write)
 struct Program{
   code: Box<[u32]>,
+  ip: u64,
   rodata: Box<[u64]>,
   rwdata: Box<[u64]>,
 }
@@ -329,7 +331,7 @@ fn cmp_type_name(cmp_type: u32) -> &'static str {
 }
 
 fn run(program: &mut Program) {
-    let mut ip: usize = 0;
+    let mut ip: usize = program.ip as usize;
     let mut val_stack: Vec<u64> = Vec::new();
     let mut prog_stack: Vec<u64> = Vec::new();
     let mut rbp: usize = 0;
@@ -955,25 +957,28 @@ fn run(program: &mut Program) {
         _ => panic!("unknown op-code 0x{:x}",op_type),
       }
     }
-    if TRACE {println!("EOF: {:?}",val_stack)}
+    if TRACE {println!("{:09}: EOF: {:?}",ip,val_stack)}
 }
 
 fn load_file(file: &mut File) -> Option<Program> {
-  let mut header_buf: [u64; 4] = [0; 4]; // [version][code-size][ro-data-size][rw-data-size]
+  let mut header_buf: [u64; 8] = [0; 8]; // [version][start][code-addr][code-size][ro-addr][ro-data-size][rw-addr][rw-data-size]
   file.read_exact(u64_as_bytes_mut(&mut header_buf)).ok()?;
-  // TODO? change encoding to include start address
   let _version = header_buf[0];
   // sizes are given in chunks of 8bytes
-  let code_size = 2*header_buf[1]; // convert u64 -> u32
-  let ro_data_size = header_buf[2];
-  let rw_data_size = header_buf[3];
+  let start_addr = header_buf[1];
+  let _code_addr = header_buf[2]; // memory-address of code, currently unused
+  let code_size = 2*header_buf[3]; // convert u64 -> u32
+  let _ro_addr = header_buf[4]; // memory-address of ro-data, currently unused
+  let ro_data_size = header_buf[5];
+  let _rw_addr = header_buf[6]; // memory-address of rw-data, currently unused
+  let rw_data_size = header_buf[7];
   let mut code_buffer = unsafe{ Box::<[u32]>::new_uninit_slice(code_size as usize).assume_init() };
   file.read_exact(u32_as_bytes_mut(&mut code_buffer)).ok()?;
   let mut ro_buffer = unsafe{ Box::<[u64]>::new_uninit_slice(ro_data_size as usize).assume_init() };
   file.read_exact(u64_as_bytes_mut(&mut ro_buffer)).ok()?;
   let mut rw_buffer = unsafe{ Box::<[u64]>::new_uninit_slice(rw_data_size as usize).assume_init() };
   file.read_exact(u64_as_bytes_mut(&mut rw_buffer)).ok()?;
-  return Some(Program{code: code_buffer,rodata: ro_buffer,rwdata: rw_buffer})
+  return Some(Program{code: code_buffer,ip: start_addr,rodata: ro_buffer,rwdata: rw_buffer})
 }
 
 fn main() -> io::Result<()> {

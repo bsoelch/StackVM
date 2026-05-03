@@ -16,7 +16,6 @@ def writeU32s(f,vals):
 
 def generate(out="in.cctbc"):
     ops = [
-0x00000b20, # jump to start
 0x00000000, # loadi dst:0 val:0
 0x00001000, # loadi dst:0 val:1
 0x000c2033, # cmpi.i64 lt dst:0 swap src:3 val:0
@@ -28,15 +27,20 @@ def generate(out="in.cctbc"):
 0x00401289, # copy drop: 2 dst:1 src:2
 0xffffff23, # ret
 0x00005000, # loadi dst:0 val:5
-0x00000121, # call_abs val:1
+0x00000021, # call_abs val:0
     ]
+    start = 10
     print([hex(op)for op in ops])
     ## file-format
-    ## [version][code-size][ro-data-size][rw-data-size]
+    ## [version][start][code-addr][code-size][ro-addr][ro-data-size][rw-addr][rw-data-size]
     with open(out,mode="wb") as f:
         writeU64(f,0) ## reserved
+        writeU64(f,start)
+        writeU64(f,0) ## reserved
         writeU64(f,(len(ops)+1)//2)
+        writeU64(f,0) ## reserved
         writeU64(f,0) ## no data
+        writeU64(f,0) ## reserved
         writeU64(f,0) ## no data
         writeU32s(f,ops) ## code
         if len(ops) & 1: ## padding
