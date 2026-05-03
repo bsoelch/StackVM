@@ -21,7 +21,7 @@ class OpLoadi:
     return f"OpLoadi(dst={self.dst},value={self.value},shift={self.shift})"
 
 class OpBinary:
-  def __init__(self,base_op,dst,src1,src2,*,cmp_type,val_type):
+  def __init__(self,base_op,dst,src1,src2,*,val_type,cmp_type):
     self.base_op = base_op
     self.val_type = val_type
     self.cmp_type = cmp_type
@@ -29,7 +29,47 @@ class OpBinary:
     self.src1 = src1
     self.src2 = src2
   def __repr__(self):
-    return f"OpBinary({self.base_op},dst={self.dst},src1={self.src1},src2={self.src2},cmp_type={self.cmp_type},val_type={self.val_type})"
+    return f"OpBinary({self.base_op},dst={self.dst},src1={self.src1},src2={self.src2},val_type={self.val_type},cmp_type={self.cmp_type})"
+
+class OpCmpImm:
+  def __init__(self,dst,src1,src2,*,val_type,cmp_type,swap_args):
+    self.val_type = val_type
+    self.cmp_type = cmp_type
+    self.swap_args = swap_args
+    self.dst = dst
+    self.src1 = src1
+    self.src2 = src2
+  def __repr__(self):
+    return f"OpCmpImm(dst={self.dst},src1={self.src1},src2={self.src2},val_type={self.val_type},cmp_type={self.cmp_type},swap_args={self.swap_args})"
+
+class OpBinaryImm:
+  def __init__(self,base_op,dst,src1,src2,*,val_type):
+    self.base_op = base_op
+    self.val_type = val_type
+    self.dst = dst
+    self.src1 = src1
+    self.src2 = src2
+  def __repr__(self):
+    return f"OpBinaryImm({self.base_op},dst={self.dst},src1={self.src1},src2={self.src2},val_type={self.val_type})"
+
+class OpShiftImm:
+  def __init__(self,base_op,dst,src1,src2,*,val_type):
+    self.base_op = base_op
+    self.val_type = val_type
+    self.dst = dst
+    self.src1 = src1
+    self.src2 = src2
+  def __repr__(self):
+    return f"OpShiftImm({self.base_op},dst={self.dst},src1={self.src1},src2={self.src2},val_type={self.val_type})"
+
+class OpUnary:
+  def __init__(self,base_op,dst,src,*,val_type):
+    self.base_op = base_op
+    self.val_type = val_type
+    self.dst = dst
+    self.src = src
+  def __repr__(self):
+    return f"OpUnary({self.base_op},dst={self.dst},src={self.src},val_type={self.val_type})"
 
 class OpJmp:
   def __init__(self,jmp_type,target):
@@ -121,12 +161,21 @@ def parseLine(line):
     arg = parseInt(args[1])
     shift = int(op_code[len("loadi."):])
     return [OpLoadi(dst,arg, shift = shift)]
-  elif (op_code.startswith("cmp.") or
-     op_code.startswith("add.") or op_code.startswith("sub.") or op_code.startswith("mul.") or
-     op_code.startswith("and.") or op_code.startswith("or.") or op_code.startswith("xor.") or
-     op_code.startswith("shl.") or op_code.startswith("lshr.") or op_code.startswith("ashr.")
+  ## TODO: memory operations
+  elif (op_code.startswith("cmp.") or op_code.startswith("cmpi.") or
+     op_code.startswith("add.") or op_code.startswith("addi.") or
+     op_code.startswith("sub.") or op_code.startswith("subi.") or
+     op_code.startswith("mul.") or  op_code.startswith("muli.") or
+     op_code.startswith("and.") or op_code.startswith("andi.") or
+     op_code.startswith("or.") or op_code.startswith("ori.") or op_code.startswith("xor.") or
+     op_code.startswith("shl.") or op_code.startswith("lshr.") or op_code.startswith("ashr.") or
+     op_code.startswith("shli.") or op_code.startswith("lshri.") or op_code.startswith("ashri.")
     ):
     base_op, val_type = op_code.split('.')
+    is_immediate = False
+    if base_op[-1] == 'i':
+      is_immediate = True
+      base_op = base_op[:-1]
     val_type = parseValType(val_type)
     need_swap = False
     if base_op == "cmp":
@@ -136,10 +185,46 @@ def parseLine(line):
       cmp_type = None
     dst = parseLoc(args[0])
     src1 = parseArg(args[1])
+    if type(src1) != StackLocation: is_immediate = True
     src2 = parseArg(args[2])
+    if type(src2) != StackLocation: is_immediate = True
     if need_swap:
       src1, src2 = src2, src1
+    if is_immediate:
+      if base_op == "cmp":
+        swap_args = False
+        if type(src1) != StackLocation:
+          if type(src2) != StackLocation:
+            raise Exception(f"at least one operand of {base_op}i has to be StackLocation")
+          src1, src2 = src2, src1
+          swap_args = True
+        return [OpCmpImm(dst,src1,src2, cmp_type = cmp_type,val_type = val_type,swap_args = swap_args)]
+      elif base_op == "sub": ## sub val, imm -> add val, -imm
+        if type(src1) != StackLocation:
+          raise Exception(f"left operand of {base_op}i has to be StackLocation")
+        if type(src2) != int and type(src) != float:
+          raise Exception(f"unsupported operand for {base_op}i: "+src2)
+        return [OpBinaryImm("add",dst,src1,-src2, val_type = val_type)]
+      elif base_op in ["add","mul","and","or"]:
+        if type(src1) != StackLocation:
+          if type(src2) != StackLocation:
+            raise Exception(f"at least one operand of {base_op}i has to be StackLocation")
+          src1, src2 = src2, src1 ## operation is commutative
+        return [OpBinaryImm(base_op,dst,src1,src2, val_type = val_type)]
+      elif base_op in ["shl","lshr","ashr"]:
+        if type(src1) != StackLocation:
+          raise Exception(f"left operand of {base_op}i has to be StackLocation")
+        return [OpShiftImm(base_op,dst,src1,src2, val_type = val_type)]
+      else:
+        raise Exception("unsupported operation for immediate: "+base_op)
     return [OpBinary(base_op,dst,src1,src2, cmp_type = cmp_type,val_type = val_type)]
+  elif op_code.startswith("neg.") or op_code.startswith("not."):
+    base_op, val_type = op_code.split('.')
+    val_type = parseValType(val_type)
+    dst = parseLoc(args[0])
+    src = parseLoc(args[1])
+    return [OpUnary(base_op, dst, src,val_type = val_type)]
+  ## TODO: conversions
   elif op_code == "jmp" or op_code == "call" or op_code == "jmp.abs" or op_code == "call.abs":
     target = parseArg(args[0])
     return [OpJmp(op_code, target)]
@@ -166,6 +251,7 @@ def parseLine(line):
     loc1 = parseLoc(args[0])
     loc2 = parseLoc(args[1])
     return [OpSwap(loc1, loc2)]
+  ## TODO: remaining stack modifications
   raise Exception("unknown op_code: "+op_code)
 
 def parse(code):
