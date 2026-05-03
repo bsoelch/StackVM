@@ -509,9 +509,9 @@ fn run(program: &mut Program) {
           const JUMP_UNARY: u32 = 4; // start of unary jumps
           const JUMP_TYPE_JNZ: u32 = 4;
           const JUMP_TYPE_JZ: u32 = 5;
-          const JUMP_DROP: u32 = 6; // start of dropping jumps
-          const JUMP_TYPE_JNZ_DROP: u32 = 6;
-          const JUMP_TYPE_JZ_DROP: u32 = 7;
+          const JUMP_POP: u32 = 6; // start of dropping jumps
+          const JUMP_TYPE_JNZ_POP: u32 = 6;
+          const JUMP_TYPE_JZ_POP: u32 = 7;
           let jump_type = op_type & 0x7;
           let long_jump = (op_type & 0x8) != 0;
           // signed for relative jump, unsigned for absolute jump
@@ -525,7 +525,7 @@ fn run(program: &mut Program) {
           } else { 0 };
           let src_index = (op_data & 0xf) as usize + 1; // needed for tracing
           let src = if jump_type < JUMP_UNARY { 0 }
-          else if jump_type >= JUMP_DROP {
+          else if jump_type >= JUMP_POP {
             val_stack.pop().unwrap()
           } else {
             op_data >>= 4;
@@ -571,8 +571,8 @@ fn run(program: &mut Program) {
                 ip = (ip as i64 + addr) as usize;
               }
             }
-            JUMP_TYPE_JNZ_DROP => {
-              if TRACE {println!("jnz.drop #{}",addr);}
+            JUMP_TYPE_JNZ_POP => {
+              if TRACE {println!("jnz pop #{}",addr);}
               if src != 0 {
                 ip = (ip as i64 + addr) as usize;
               }
@@ -583,8 +583,8 @@ fn run(program: &mut Program) {
                 ip = (ip as i64 + addr) as usize;
               }
             }
-            JUMP_TYPE_JZ_DROP => {
-              if TRACE {println!("jz.drop #{}",addr);}
+            JUMP_TYPE_JZ_POP => {
+              if TRACE {println!("jz pop #{}",addr);}
               if src == 0 {
                 ip = (ip as i64 + addr) as usize;
               }
