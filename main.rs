@@ -303,6 +303,30 @@ fn op_cvt(src: u64,src_type: u32,signed: bool,dst_type: u32) -> u64 {
   }
 }
 
+const TRACE:bool = true;
+fn val_type_name(val_type: u32) -> &'static str {
+  match val_type {
+    VAL_I8  => "i8",
+    VAL_I16 => "i16",
+    VAL_I32 => "i32",
+    VAL_I64 => "i64",
+    VAL_F16 => "f16",
+    VAL_F32 => "f32",
+    VAL_F64 => "f64",
+    _ => panic!("unsupported val_type: {}",val_type)
+  }
+}
+fn cmp_type_name(cmp_type: u32) -> &'static str {
+  match cmp_type {
+    CMP_EQ  => "eq",
+    CMP_NE  => "ne",
+    CMP_LT  => "lt",
+    CMP_LE  => "le",
+    CMP_ULT => "ult",
+    CMP_ULE => "ule",
+    _ => panic!("unsupported cmp_type: {}",cmp_type)
+  }
+}
 
 fn run(program: &mut Program) {
     let mut ip: usize = 0;
@@ -315,13 +339,14 @@ fn run(program: &mut Program) {
       let op_type = op & 0xff;
       let op_data = op >> 8;
       let base_shift = 8; // how much has op-data been shifted
-      println!("{:08x}: {:?}",op,val_stack);
+      if TRACE {println!("{:09}: {:08x}  {:?}",ip-1,op,val_stack);}
       match op_type {
         0x0..=0x7 => { // load-immediate[shift:3] [dst:4][data:*s]
           let dst = op_data & 0xf;
           let op_data = (op as i32) >> (base_shift+4);
           // sign-extend 20-bit value in op_data
           let val = ((op_data as i64) << 8*op_type) as u64; // shift value by 0 to 56 bits
+          if TRACE {println!("loadi.{} @{} #{}",op_type,dst,op_data);}
           if dst == 0 {
             val_stack.push(val);
           } else {
@@ -338,40 +363,50 @@ fn run(program: &mut Program) {
           let mut buf: [u64;1] = [0;1];
           buffer_get(u64_as_bytes(&prog_stack),addr,&mut u64_as_bytes_mut(&mut buf)[0..size]);
           stack_set(buf[0],&mut val_stack,dst as usize);
+          if TRACE {println!("local-get.{} @{} #{}",size,dst,op_data);}
         }
         0xC..=0xF => { // local-seti [src:4][offset:*u]
-          let src = op_data & 0xf;
+          let src = (op_data & 0xf) as usize + 1;
           let op_data = op_data >> 4;
           let size = 1 << (op_type-12); // 1,2,4,8
           let addr = rbp + op_data as usize;
-          let src_val = stack_get(&val_stack,src as usize + 1);
+          let src_val = stack_get(&val_stack,src);
           let src_vals: [u64;1] = [src_val;1];
           buffer_set(u64_as_bytes_mut(&mut prog_stack),addr,&u64_as_bytes(&src_vals)[0..size]);
+          if TRACE {println!("local-set.{} @{} #{}",size,src,op_data);}
         }
         0x10 => { // local-addr [dst:4][offset:*u]
           let dst = op_data & 0xf;
           let op_data = op_data >> 4;
           let addr = local_addr_to_ptr(rbp + op_data as usize);
           stack_set(addr,&mut val_stack,dst as usize);
+          if TRACE {println!("local-addr @{} #{}",dst,op_data);}
         }
         0x11 => { // local-alloc
           panic!("unimplemented: local-alloc");
         }
-        0x12|0x13 => { // ptr-get/ptr-set [dst:4][val?4][size:2][offset:*u]
+        0x12|0x13 => { // ptr-get/ptr-set [dst:4][src?4][size:2][offset:*u]
           let is_set = op_type == 0x13;
           let mut op_data = op_data;
           let dst = op_data & 0xf;
           op_data >>= 4;
           let mut buf: [u64;1] = [0;1];
+          let src = (op_data & 0xf) as usize + 1; // needed for tracing
           if is_set {
-            let src = op_data & 0xf;
             op_data >>= 4;
-              buf[0] = stack_get(&val_stack,src as usize + 1);
+            buf[0] = stack_get(&val_stack,src);
           }
-          let size = 1 << op_data & 0x3; // 1,2,4,8
+          let size = 1 << (op_data & 0x3); // 1,2,4,8
           op_data >>= 2;
           let ptr = stack_get(&val_stack,dst as usize + 1) + (op_data as u64);
           let addr = (ptr & PTR_VALUE_MASK) as usize;
+          if TRACE {
+            if is_set {
+                println!("ptr-set.{} @{} @{} #{}",size,dst,src,op_data);
+            } else {
+                println!("ptr-get.{} @{} #{}",size,dst,op_data);
+            }
+          }
           match ptr & PTR_TYPE_MASK {
             PTR_LOCAL => {
               if is_set {
@@ -407,8 +442,9 @@ fn run(program: &mut Program) {
           const JUMP_TYPE_CALL: u32 = 3;
           const JUMP_UNARY: u32 = 4; // start of unary jumps
           const JUMP_TYPE_JNZ: u32 = 4;
-          const JUMP_TYPE_JNZ_DROP: u32 = 5;
-          const JUMP_TYPE_JZ: u32 = 6;
+          const JUMP_TYPE_JZ: u32 = 5;
+          const JUMP_DROP: u32 = 6; // start of dropping jumps
+          const JUMP_TYPE_JNZ_DROP: u32 = 6;
           const JUMP_TYPE_JZ_DROP: u32 = 7;
           let jump_type = op_type & 0x7;
           let long_jump = (op_type & 0x8) != 0;
@@ -421,27 +457,42 @@ fn run(program: &mut Program) {
           let base_addr = if long_jump {
             val_stack.pop().unwrap()
           } else { 0 };
-          let src = if jump_type < JUMP_UNARY { 0 } else {
-            let index = op_data & 0xf;
+          let src_index = (op_data & 0xf) as usize + 1; // needed for tracing
+          let src = if jump_type < JUMP_UNARY { 0 }
+          else if jump_type >= JUMP_DROP {
+            val_stack.pop().unwrap()
+          } else {
             op_data >>= 4;
-            stack_get(&val_stack,index as usize + 1)
+            stack_get(&val_stack,src_index)
           };
           let addr = base_addr as i64 + op_data as i64;
           match jump_type {
             JUMP_TYPE_JMP => {
+              if TRACE {println!("jmp #{}",addr);}
               ip = (ip as i64 + addr) as usize;
             }
             JUMP_TYPE_JMP_ABS => {
+              if TRACE {println!("jmp-abs #{}",addr);}
               ip = addr as usize;
             }
             JUMP_TYPE_CALL | JUMP_TYPE_CALL_ABS => {
-              let dst = if jump_type == JUMP_TYPE_CALL_ABS { addr as usize } else {
+              let dst = if jump_type == JUMP_TYPE_CALL_ABS {
+                addr as usize
+              } else {
                 (ip as i64 + addr) as usize
               };
               if addr == -1 { // return (call to -1 is endless loop)
+                if TRACE {println!("ret");}
                 rbp = prog_stack.pop().unwrap() as usize;
                 ip = prog_stack.pop().unwrap() as usize;
               } else {
+                if TRACE {
+                    if jump_type == JUMP_TYPE_CALL_ABS {
+                        println!("call-abs #{}",addr);
+                    } else {
+                        println!("call #{}",addr);
+                    }
+                }
                 prog_stack.push(ip as u64);
                 prog_stack.push(rbp as u64);
                 rbp = 8*prog_stack.len();
@@ -449,23 +500,25 @@ fn run(program: &mut Program) {
               }
             }
             JUMP_TYPE_JNZ => {
+              if TRACE {println!("jnz @{} #{}",src_index,addr);}
               if src != 0 {
                 ip = (ip as i64 + addr) as usize;
               }
             }
             JUMP_TYPE_JNZ_DROP => {
-              val_stack.pop();
+              if TRACE {println!("jnz.drop #{}",addr);}
               if src != 0 {
                 ip = (ip as i64 + addr) as usize;
               }
             }
             JUMP_TYPE_JZ => {
+              if TRACE {println!("jz @{} #{}",src_index,addr);}
               if src == 0 {
                 ip = (ip as i64 + addr) as usize;
               }
             }
             JUMP_TYPE_JZ_DROP => {
-              val_stack.pop();
+              if TRACE {println!("jz.drop #{}",addr);}
               if src == 0 {
                 ip = (ip as i64 + addr) as usize;
               }
@@ -476,9 +529,9 @@ fn run(program: &mut Program) {
         0x30..=0x37 => { // cmpi[val-type:3] [dst:4][src1:4][cmp-type:3][swap: 1][imm:12]
           let val_type = (op_type & 0x7) as u32; // i8 i16 i32 i64 . f16 f32 f64
           let op_data = (op as i32) >> base_shift;
-          let dst = op_data & 0xf;
+          let dst = (op_data & 0xf) as usize;
           let op_data = op_data >> 4;
-          let src1 = op_data & 0xf;
+          let src1 = (op_data & 0xf) as usize +1;
           let op_data = op_data >> 4;
           let swap_args = (op_data & 0x8) != 0;
           let cmp_type = (op_data & 0x7) as u32; // eq ne . . lt le ult ule
@@ -490,73 +543,79 @@ fn run(program: &mut Program) {
             }
           }
           let res = if swap_args {
-            op_cmp(op_data as i64 as u64,stack_get(&val_stack,src1 as usize + 1),cmp_type as u32,val_type)
+            if TRACE {println!("cmpi.{} {} @{} #{} @{}",val_type_name(val_type),cmp_type_name(cmp_type),dst,op_data,src1);}
+            op_cmp(op_data as i64 as u64,stack_get(&val_stack,src1),cmp_type as u32,val_type)
           } else {
-            op_cmp(stack_get(&val_stack,src1 as usize + 1),op_data as i64 as u64,cmp_type,val_type)
+            if TRACE {println!("cmpi.{} {} @{} @{} #{}",val_type_name(val_type),cmp_type_name(cmp_type),dst,src1,op_data);}
+            op_cmp(stack_get(&val_stack,src1),op_data as i64 as u64,cmp_type,val_type)
           };
-          stack_set(res,&mut val_stack,dst as usize)
+          stack_set(res,&mut val_stack,dst)
         }
         0x38..=0x3f => { // addi[val-type:3] [dst:4][src1:4][imm:16]
           let val_type = op_type & 0x7; // i8 i16 i32 i64 . f16 f32 f64
           let op_data = (op as i32) >> base_shift;
-          let dst = op_data & 0xf;
+          let dst = (op_data & 0xf) as usize;
           let op_data = op_data >> 4;
-          let src1 = op_data & 0xf;
+          let src1 = (op_data & 0xf) as usize +1;
           let mut op_data = op_data >> 4;
+          if TRACE {println!("addi.{} @{} @{} #{}",val_type_name(val_type),dst,src1,op_data);}
           if val_type >= VAL_FLOAT { // float -> immediate in high bits
             let bit_count = 1 << (val_type&0x3);
             if bit_count > 16 {
                 op_data <<= bit_count - 16;
             }
           }
-          let res = op_add(stack_get(&val_stack,src1 as usize + 1),op_data as i64 as u64,val_type);
-          stack_set(res,&mut val_stack,dst as usize)
+          let res = op_add(stack_get(&val_stack,src1),op_data as i64 as u64,val_type);
+          stack_set(res,&mut val_stack,dst)
         }
         0x40..=0x47 => { // muli[val-type:3] [dst:4][src1:4][imm:16]
           let val_type = op_type & 0x7; // i8 i16 i32 i64 . f16 f32 f64
           let op_data = (op as i32) >> base_shift;
-          let dst = op_data & 0xf;
+          let dst = (op_data & 0xf) as usize;
           let op_data = op_data >> 4;
-          let src1 = op_data & 0xf;
+          let src1 = (op_data & 0xf) as usize +1;
           let mut op_data = op_data >> 4;
+          if TRACE {println!("muli.{} @{} @{} #{}",val_type_name(val_type),dst,src1,op_data);}
           if val_type >= VAL_FLOAT { // float -> immediate in high bits
             let bit_count = 1 << (val_type&0x3);
             if bit_count > 16 {
                 op_data <<= bit_count - 16;
             }
           }
-          let res = op_mul(stack_get(&val_stack,src1 as usize + 1),op_data as i64 as u64,val_type);
-          stack_set(res,&mut val_stack,dst as usize)
+          let res = op_mul(stack_get(&val_stack,src1),op_data as i64 as u64,val_type);
+          stack_set(res,&mut val_stack,dst)
         }
         0x48..=0x4b => { // andi[val-type:2] [dst:4][src1:4][imm:16]
           let val_type = op_type & 0x3; // i8 i16 i32 i64
           let op_data = (op as i32) >> base_shift;
-          let dst = op_data & 0xf;
+          let dst = (op_data & 0xf) as usize;
           let op_data = op_data >> 4;
-          let src1 = op_data & 0xf;
+          let src1 = (op_data & 0xf) as usize +1;
           let op_data = op_data >> 4;
-          let res = op_and(stack_get(&val_stack,src1 as usize + 1),op_data as i64 as u64,val_type);
-          stack_set(res,&mut val_stack,dst as usize)
+          if TRACE {println!("andi.{} @{} @{} #{}",val_type_name(val_type),dst,src1,op_data);}
+          let res = op_and(stack_get(&val_stack,src1),op_data as i64 as u64,val_type);
+          stack_set(res,&mut val_stack,dst)
         }
         0x4c..=0x4f => { // ori[val-type:2] [dst:4][src1:4][imm:16]
           let val_type = op_type & 0x3; // i8 i16 i32 i64
           let op_data = (op as i32) >> base_shift;
-          let dst = op_data & 0xf;
+          let dst = (op_data & 0xf) as usize;
           let op_data = op_data >> 4;
-          let src1 = op_data & 0xf;
+          let src1 = (op_data & 0xf) as usize +1;
           let op_data = op_data >> 4;
-          let res = op_or(stack_get(&val_stack,src1 as usize + 1),op_data as i64 as u64,val_type);
-          stack_set(res,&mut val_stack,dst as usize)
+          if TRACE {println!("ori.{} @{} @{} #{}",val_type_name(val_type),dst,src1,op_data);}
+          let res = op_or(stack_get(&val_stack,src1),op_data as i64 as u64,val_type);
+          stack_set(res,&mut val_stack,dst)
         }
         0x50..=0x57 => { // binary-op[val-type:3] [bin_op:4][dst:4][src1:4][src2:4][cmp-type:3]
           let val_type = op_type & 0x7; // i8 i16 i32 i64 . f16 f32 f64
           let bin_op = op_data & 0xf;
           let op_data = op_data >> 4;
-          let dst = op_data & 0xf;
+          let dst = (op_data & 0xf) as usize;
           let op_data = op_data >> 4;
-          let src1 = op_data & 0xf;
+          let src1 = (op_data & 0xf) as usize + 1;
           let op_data = op_data >> 4;
-          let src2 = op_data & 0xf;
+          let src2 = (op_data & 0xf) as usize + 1;
           let op_data = op_data >> 4;
           const OP_CMP: u32 = 0;
           const OP_ADD: u32 = 1;
@@ -571,77 +630,87 @@ fn run(program: &mut Program) {
           let res = match bin_op {
             OP_CMP => {
               let cmp_type = op_data & 0x7; // eq ne . . lt le ult ule
+              if TRACE {println!("cmp.{} {} @{} @{} @{}",val_type_name(val_type),cmp_type_name(cmp_type),dst,src1,src2);}
               op_cmp(
-                stack_get(&val_stack,src1 as usize + 1),
-                stack_get(&val_stack,src2 as usize + 1),
+                stack_get(&val_stack,src1),
+                stack_get(&val_stack,src2),
               cmp_type,val_type)
             }
             OP_ADD => {
+              if TRACE {println!("add.{} @{} @{} @{}",val_type_name(val_type),dst,src1,src2);}
               op_add(
-                stack_get(&val_stack,src1 as usize + 1),
-                stack_get(&val_stack,src2 as usize + 1),
+                stack_get(&val_stack,src1),
+                stack_get(&val_stack,src2),
               val_type)
             }
             OP_SUB => {
+              if TRACE {println!("sub.{} @{} @{} @{}",val_type_name(val_type),dst,src1,src2);}
               op_sub(
-                stack_get(&val_stack,src1 as usize + 1),
-                stack_get(&val_stack,src2 as usize + 1),
+                stack_get(&val_stack,src1),
+                stack_get(&val_stack,src2),
               val_type)
             }
             OP_MUL => {
+              if TRACE {println!("mul.{} @{} @{} @{}",val_type_name(val_type),dst,src1,src2);}
               op_mul(
-                stack_get(&val_stack,src1 as usize + 1),
-                stack_get(&val_stack,src2 as usize + 1),
+                stack_get(&val_stack,src1),
+                stack_get(&val_stack,src2),
               val_type)
             }
             // TODO: div/rem/udiv/urem
             OP_AND => {
+              if TRACE {println!("and.{} @{} @{} @{}",val_type_name(val_type),dst,src1,src2);}
               op_and(
-                stack_get(&val_stack,src1 as usize + 1),
-                stack_get(&val_stack,src2 as usize + 1),
+                stack_get(&val_stack,src1),
+                stack_get(&val_stack,src2),
               val_type)
             }
             OP_OR => {
+              if TRACE {println!("or.{} @{} @{} @{}",val_type_name(val_type),dst,src1,src2);}
               op_or(
-                stack_get(&val_stack,src1 as usize + 1),
-                stack_get(&val_stack,src2 as usize + 1),
+                stack_get(&val_stack,src1),
+                stack_get(&val_stack,src2),
               val_type)
             }
             OP_XOR => {
+              if TRACE {println!("xor.{} @{} @{} @{}",val_type_name(val_type),dst,src1,src2);}
               op_xor(
-                stack_get(&val_stack,src1 as usize + 1),
-                stack_get(&val_stack,src2 as usize + 1),
+                stack_get(&val_stack,src1),
+                stack_get(&val_stack,src2),
               val_type)
             }
             OP_SHL => {
+              if TRACE {println!("shl.{} @{} @{} @{}",val_type_name(val_type),dst,src1,src2);}
               op_shl(
-                stack_get(&val_stack,src1 as usize + 1),
-                stack_get(&val_stack,src2 as usize + 1),
+                stack_get(&val_stack,src1),
+                stack_get(&val_stack,src2),
               val_type)
             }
             OP_LSHR => {
+              if TRACE {println!("lshr.{} @{} @{} @{}",val_type_name(val_type),dst,src1,src2);}
               op_lshr(
-                stack_get(&val_stack,src1 as usize + 1),
-                stack_get(&val_stack,src2 as usize + 1),
+                stack_get(&val_stack,src1),
+                stack_get(&val_stack,src2),
               val_type)
             }
             OP_ASHR => {
+              if TRACE {println!("ashr.{} @{} @{} @{}",val_type_name(val_type),dst,src1,src2);}
               op_ashr(
-                stack_get(&val_stack,src1 as usize + 1),
-                stack_get(&val_stack,src2 as usize + 1),
+                stack_get(&val_stack,src1),
+                stack_get(&val_stack,src2),
               val_type)
             }
             _ => {panic!("unknown binary operation: {}",bin_op)}
           };
-          stack_set(res,&mut val_stack,dst as usize)
+          stack_set(res,&mut val_stack,dst)
         }
         0x58..=0x5f => { // unary-op[val-type:3] [un_op:4][dst:4][src:4]
           let val_type = op_type & 0x7; // i8 i16 i32 i64 . f16 f32 f64
           let un_op = op_data & 0xf;
           let op_data = op_data >> 4;
-          let dst = op_data & 0xf;
+          let dst = (op_data & 0xf) as usize;
           let op_data = op_data >> 4;
-          let src = op_data & 0xf;
+          let src = (op_data & 0xf) as usize +1;
           let op_data = op_data >> 4;
           const OP_NEG: u32 = 0;
           const OP_NOT: u32 = 1;
@@ -650,52 +719,65 @@ fn run(program: &mut Program) {
           const OP_ASHRI: u32 = 4;
           let res = match un_op {
             OP_NEG => {
+              if TRACE {println!("neg.{} @{} @{}",val_type_name(val_type),dst,src);}
               op_sub(
                 0,
-                stack_get(&val_stack,src as usize + 1),
+                stack_get(&val_stack,src),
               val_type)
             }
             OP_NOT => {
+              if TRACE {println!("not.{} @{} @{}",val_type_name(val_type),dst,src);}
               op_xor(
-                stack_get(&val_stack,src as usize + 1),
+                stack_get(&val_stack,src),
                 !0,
               val_type)
             }
             OP_SHLI => {
+              if TRACE {println!("shli.{} @{} @{} #{}",val_type_name(val_type),dst,src,op_data);}
               op_shl(
-                stack_get(&val_stack,src as usize + 1),
+                stack_get(&val_stack,src),
                 op_data as u64,
               val_type)
             }
             OP_LSHRI => {
+              if TRACE {println!("lshri.{} @{} @{} #{}",val_type_name(val_type),dst,src,op_data);}
               op_lshr(
-                stack_get(&val_stack,src as usize + 1),
+                stack_get(&val_stack,src),
                 op_data as u64,
               val_type)
             }
             OP_ASHRI => {
+              if TRACE {println!("ashri.{} @{} @{} #{}",val_type_name(val_type),dst,src,op_data);}
               op_ashr(
-                stack_get(&val_stack,src as usize + 1),
+                stack_get(&val_stack,src),
                 op_data as u64,
               val_type)
             }
             _ => {panic!("unknown unary operation: {}",un_op)}
           };
-          stack_set(res,&mut val_stack,dst as usize)
+          stack_set(res,&mut val_stack,dst)
         }
         0x60..=0x6f => { // cvt[signed:1][dst_type:3] [dst:4][src:4][src-type:3]
           let signed = (op_type & 0x8) != 0;
           let dst_type = op_type & 0x7;
-          let dst = op_data & 0xf;
+          let dst = (op_data & 0xf) as usize;
           let op_data = op_data >> 4;
-          let src = op_data & 0xf;
+          let src = (op_data & 0xf) as usize +1;
           let op_data = op_data >> 4;
           let src_type = op_data & 0x7;
-          let res = op_cvt(stack_get(&val_stack,src as usize + 1),src_type,signed,dst_type);
-          stack_set(res,&mut val_stack,dst as usize)
+          if TRACE {
+            if signed {
+                println!("cvts.{}.{} @{} @{}",val_type_name(dst_type),val_type_name(src_type),dst,src);
+            } else {
+                println!("cvtu.{}.{} @{} @{}",val_type_name(dst_type),val_type_name(src_type),dst,src);
+            }
+          }
+          let res = op_cvt(stack_get(&val_stack,src),src_type,signed,dst_type);
+          stack_set(res,&mut val_stack,dst)
         }
         0x80 => { // drop [imm:24]
             let count = op_data as usize;
+            if TRACE {println!("drop #{}",count);}
             if count > val_stack.len() { panic!("stack underflow");}
             let new_length = val_stack.len() - count;
             val_stack.truncate(new_length);
@@ -703,6 +785,7 @@ fn run(program: &mut Program) {
         0x81 => { // removeAt [count:8][loc:16]
             let count = (op_data & 0xff) as usize;
             let loc = (op_data >> 8) as usize + 1;
+            if TRACE {println!("remove @{} #{}",loc,count);}
             if loc > val_stack.len() || count > loc { panic!("stack underflow");}
             let start = val_stack.len() - loc;
             let end = start + count;
@@ -711,6 +794,7 @@ fn run(program: &mut Program) {
         0x82 => { // remove2 [loc1:8][loc2:8]
             let loc1 = (op_data & 0xff) as usize + 1;
             let loc2 = ((op_data >> 8) & 0xff) as usize + 1;
+            if TRACE {println!("remove2 @{} @{}",loc1,loc2);}
             if loc1 > val_stack.len() { panic!("stack underflow");}
             val_stack.remove(val_stack.len() - loc1);
             if loc2 > val_stack.len() { panic!("stack underflow");}
@@ -721,6 +805,7 @@ fn run(program: &mut Program) {
             let op_data = op_data >> 8;
             let loc2 = (op_data & 0xff) as usize + 1;
             let loc3 = ((op_data >> 8) & 0xff) as usize + 1;
+            if TRACE {println!("remove3 @{} @{} @{}",loc1,loc2,loc3);}
             if loc1 > val_stack.len() { panic!("stack underflow");}
             val_stack.remove(val_stack.len() - loc1);
             if loc2 > val_stack.len() { panic!("stack underflow");}
@@ -731,6 +816,7 @@ fn run(program: &mut Program) {
         0x84 => { // insert [src:4][dst:20]
             let src = (op_data & 0xf) as usize + 1;
             let dst = (op_data >> 4) as usize + 1;
+            if TRACE {println!("insert @{} @{}",dst,src);}
             let val = stack_get(&val_stack,src);
             if dst > val_stack.len() { panic!("stack underflow");}
             val_stack.insert(dst,val);
@@ -738,6 +824,7 @@ fn run(program: &mut Program) {
         0x85 => { // extract [dst:4][src:20]
             let dst = (op_data & 0xf) as usize;
             let src = (op_data >> 4) as usize;
+            if TRACE {println!("extract @{} @{}",dst,src);}
             if src > val_stack.len() { panic!("stack underflow");}
             let val = val_stack.remove(src);
             stack_set(val,&mut val_stack,dst);
@@ -745,12 +832,14 @@ fn run(program: &mut Program) {
         0x87 => { // copy-from [dst:4][src:20]
             let dst = op_data & 0xf;
             let src = op_data >> 4;
+            if TRACE {println!("copy @{} @{}",dst,src);}
             let val = stack_get(&val_stack,(src as usize)+1);
             stack_set(val,&mut val_stack,dst as usize);
         }
         0x88 => { // copy-to [src:4][dst:20]
             let src = op_data & 0xf;
             let dst = op_data >> 4;
+            if TRACE {println!("copy @{} @{}",dst,src);}
             let val = stack_get(&val_stack,(src as usize)+1);
             stack_set(val,&mut val_stack,dst as usize);
         }
@@ -759,6 +848,7 @@ fn run(program: &mut Program) {
             let op_data = op_data >> 4;
             let dst = (op_data & 0x3ff) as usize;
             let src = (op_data >> 10) as usize + 1;
+            if TRACE {println!("copy.drop{} @{} @{}",to_drop,dst,src);}
             let val = stack_get(&val_stack,src);
             if to_drop > val_stack.len() { panic!("stack underflow");}
             let new_length = val_stack.len() - to_drop;
@@ -774,6 +864,7 @@ fn run(program: &mut Program) {
             let op_data = op_data >> 4;
             let src1 = (op_data & 0xf) as usize + 1;
             let src2 = (op_data >> 4) as usize + 1;
+            if TRACE {println!("copy2.drop{} @{} @{} @{} @{}",to_drop,dst1,src1,dst2,src2);}
             let val1 = stack_get(&val_stack,src1);
             let val2 = stack_get(&val_stack,src2);
             if to_drop > val_stack.len() { panic!("stack underflow");}
@@ -793,6 +884,7 @@ fn run(program: &mut Program) {
             let op_data = op_data >> 4;
             let src2 = op_data & 0xf;
             let src3 = op_data >> 4;
+            if TRACE {println!("copy3 @{} @{} @{} @{} @{} @{}",dst1,src1,dst2,src2,dst3,src3);}
             let val1 = stack_get(&val_stack,(src1 as usize)+1);
             let val2 = stack_get(&val_stack,(src2 as usize)+1);
             let val3 = stack_get(&val_stack,(src3 as usize)+1);
@@ -803,6 +895,7 @@ fn run(program: &mut Program) {
         0x8c => { // swap [A:8][B:8]
             let a1 = op_data & 0xff;
             let b1 = (op_data >> 8) & 0xff;
+            if TRACE {println!("swap @{} @{}",a1,b1);}
             let val1 = stack_get(&val_stack,(a1 as usize)+1);
             let val2 = stack_get(&val_stack,(b1 as usize)+1);
             stack_set(val1,&mut val_stack,(b1 as usize)+1);
@@ -811,6 +904,7 @@ fn run(program: &mut Program) {
         0x8d => { // deep-swap [A:4][B:20]
             let a1 = op_data & 0xf;
             let b1 = op_data >> 4;
+            if TRACE {println!("swap @{} @{}",a1,b1);}
             let val1 = stack_get(&val_stack,(a1 as usize)+1);
             let val2 = stack_get(&val_stack,(b1 as usize)+1);
             stack_set(val1,&mut val_stack,(b1 as usize)+1);
@@ -823,6 +917,7 @@ fn run(program: &mut Program) {
             let op_data = op_data >> 6;
             let b1 = op_data & 0x3f;
             let b2 = op_data >> 6;
+            if TRACE {println!("swap2 @{} @{} @{} @{}",a1,b1,a2,b2);}
             let val1 = stack_get(&val_stack,(a1 as usize)+1);
             let val2 = stack_get(&val_stack,(a2 as usize)+1);
             let val3 = stack_get(&val_stack,(b1 as usize)+1);
@@ -843,6 +938,7 @@ fn run(program: &mut Program) {
             let op_data = op_data >> 4;
             let b2 = op_data & 0xf;
             let b3 = op_data >> 4;
+            if TRACE {println!("swap2 @{} @{} @{} @{} @{} @{}",a1,b1,a2,b2,a3,b3);}
             let val1 = stack_get(&val_stack,(a1 as usize)+1);
             let val2 = stack_get(&val_stack,(a2 as usize)+1);
             let val3 = stack_get(&val_stack,(a3 as usize)+1);
@@ -859,9 +955,7 @@ fn run(program: &mut Program) {
         _ => panic!("unknown op-code 0x{:x}",op_type),
       }
     }
-    for x in val_stack.drain(..) {
-      println!("{}",x);
-    }
+    if TRACE {println!("EOF: {:?}",val_stack)}
 }
 
 fn load_file(file: &mut File) -> Option<Program> {
