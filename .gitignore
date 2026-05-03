@@ -5,4 +5,5 @@ main
 *.bc
 *.ll
 *.zip
+*.cctbc
 src.txt

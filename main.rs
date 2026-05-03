@@ -145,10 +145,10 @@ fn op_cmp(arg1: u64,arg2: u64, cmp_type: u32,val_type: u32) -> u64 {
 }
 fn op_add(arg1: u64,arg2: u64,val_type: u32) -> u64 {
   match val_type {
-    VAL_I8  => {((arg1 as u8) + (arg2 as u8)) as u64 }
-    VAL_I16 => {((arg1 as u16) + (arg2 as u16)) as u64 }
-    VAL_I32  => {((arg1 as u32) + (arg2 as u32)) as u64 }
-    VAL_I64 => { arg1 + arg2 }
+    VAL_I8  => {((arg1 as u8).wrapping_add(arg2 as u8)) as u64 }
+    VAL_I16 => {((arg1 as u16).wrapping_add(arg2 as u16)) as u64 }
+    VAL_I32  => {((arg1 as u32).wrapping_add(arg2 as u32)) as u64 }
+    VAL_I64 => { arg1.wrapping_add(arg2) }
     VAL_F32 => {(f32::from_bits(arg1 as u32) + f32::from_bits(arg2 as u32)).to_bits() as u64 }
     VAL_F64 => {(f64::from_bits(arg1) + f64::from_bits(arg2)).to_bits()}
     _ => panic!("unsupported val_type for add: {}",val_type)
@@ -156,10 +156,10 @@ fn op_add(arg1: u64,arg2: u64,val_type: u32) -> u64 {
 }
 fn op_sub(arg1: u64,arg2: u64,val_type: u32) -> u64 {
   match val_type {
-    VAL_I8  => {((arg1 as u8) - (arg2 as u8)) as u64 }
-    VAL_I16 => {((arg1 as u16) - (arg2 as u16)) as u64 }
-    VAL_I32  => {((arg1 as u32) - (arg2 as u32)) as u64 }
-    VAL_I64 => { arg1 - arg2 }
+    VAL_I8  => {((arg1 as u8).wrapping_sub(arg2 as u8)) as u64 }
+    VAL_I16 => {((arg1 as u16).wrapping_sub(arg2 as u16)) as u64 }
+    VAL_I32  => {((arg1 as u32).wrapping_sub(arg2 as u32)) as u64 }
+    VAL_I64 => { arg1.wrapping_sub(arg2) }
     VAL_F32 => {(f32::from_bits(arg1 as u32) - f32::from_bits(arg2 as u32)).to_bits() as u64 }
     VAL_F64 => {(f64::from_bits(arg1) - f64::from_bits(arg2)).to_bits()}
     _ => panic!("unsupported val_type for sub: {}",val_type)
@@ -167,10 +167,10 @@ fn op_sub(arg1: u64,arg2: u64,val_type: u32) -> u64 {
 }
 fn op_mul(arg1: u64,arg2: u64,val_type: u32) -> u64 {
   match val_type {
-    VAL_I8  => {((arg1 as u8) * (arg2 as u8)) as u64 }
-    VAL_I16 => {((arg1 as u16) * (arg2 as u16)) as u64 }
-    VAL_I32  => {((arg1 as u32) * (arg2 as u32)) as u64 }
-    VAL_I64 => { arg1 * arg2 }
+    VAL_I8  => {((arg1 as u8).wrapping_mul(arg2 as u8)) as u64 }
+    VAL_I16 => {((arg1 as u16).wrapping_mul(arg2 as u16)) as u64 }
+    VAL_I32  => {((arg1 as u32).wrapping_mul(arg2 as u32)) as u64 }
+    VAL_I64 => { arg1.wrapping_mul(arg2) }
     VAL_F32 => {(f32::from_bits(arg1 as u32) * f32::from_bits(arg2 as u32)).to_bits() as u64 }
     VAL_F64 => {(f64::from_bits(arg1) * f64::from_bits(arg2)).to_bits()}
     _ => panic!("unsupported val_type for mul: {}",val_type)
@@ -205,28 +205,28 @@ fn op_xor(arg1: u64,arg2: u64,val_type: u32) -> u64 {
 }
 fn op_shl(arg1: u64,arg2: u64,val_type: u32) -> u64 {
   match val_type {
-    VAL_I8  => {((arg1 as u8) << (arg2 as u8)) as u64 }
-    VAL_I16 => {((arg1 as u16) << (arg2 as u16)) as u64 }
-    VAL_I32  => {((arg1 as u32) << (arg2 as u32)) as u64 }
-    VAL_I64 => { arg1 << arg2 }
+    VAL_I8  => {((arg1 as u8).wrapping_shl(arg2 as u32)) as u64 }
+    VAL_I16 => {((arg1 as u16).wrapping_shl(arg2 as u32)) as u64 }
+    VAL_I32  => {((arg1 as u32).wrapping_shl(arg2 as u32)) as u64 }
+    VAL_I64 => { arg1.wrapping_shl(arg2 as u32) }
     _ => panic!("unsupported val_type for shl: {}",val_type)
   }
 }
 fn op_lshr(arg1: u64,arg2: u64,val_type: u32) -> u64 {
   match val_type {
-    VAL_I8  => {((arg1 as u8) >> (arg2 as u8)) as u64 }
-    VAL_I16 => {((arg1 as u16) >> (arg2 as u16)) as u64 }
-    VAL_I32  => {((arg1 as u32) >> (arg2 as u32)) as u64 }
-    VAL_I64 => { arg1 >> arg2 }
+    VAL_I8  => {((arg1 as u8).wrapping_shr(arg2 as u32)) as u64 }
+    VAL_I16 => {((arg1 as u16).wrapping_shr(arg2 as u32)) as u64 }
+    VAL_I32  => {((arg1 as u32).wrapping_shr(arg2 as u32)) as u64 }
+    VAL_I64 => { arg1.wrapping_shr(arg2 as u32) }
     _ => panic!("unsupported val_type for lshr: {}",val_type)
   }
 }
 fn op_ashr(arg1: u64,arg2: u64,val_type: u32) -> u64 {
   match val_type {
-    VAL_I8  => {((arg1 as i8) >> (arg2 as i8)) as u64 }
-    VAL_I16 => {((arg1 as i16) >> (arg2 as i16)) as u64 }
-    VAL_I32  => {((arg1 as i32) >> (arg2 as i32)) as u64 }
-    VAL_I64 => { ((arg1 as i64) >> (arg2 as i64)) as u64 }
+    VAL_I8  => {((arg1 as i8).wrapping_shr(arg2 as u32)) as u64 }
+    VAL_I16 => {((arg1 as i16).wrapping_shr(arg2 as u32)) as u64 }
+    VAL_I32  => {((arg1 as i32).wrapping_shr(arg2 as u32)) as u64 }
+    VAL_I64 => { ((arg1 as i64).wrapping_shr(arg2 as u32)) as u64 }
     _ => panic!("unsupported val_type for ashr: {}",val_type)
   }
 }
@@ -315,6 +315,7 @@ fn run(program: &mut Program) {
       let op_type = op & 0xff;
       let op_data = op >> 8;
       let base_shift = 8; // how much has op-data been shifted
+      println!("{:08x}: {:?}",op,val_stack);
       match op_type {
         0x0..=0x7 => { // load-immediate[shift:3] [dst:4][data:*s]
           let dst = op_data & 0xf;
@@ -472,7 +473,7 @@ fn run(program: &mut Program) {
             _ => panic!("unknown jump-type {}",jump_type)
           }
         }
-        0x30..=0x37 => { // cmpi[val-type:3] [dst:4][src1:4][swap: 1][cmp-type:3][imm:12]
+        0x30..=0x37 => { // cmpi[val-type:3] [dst:4][src1:4][cmp-type:3][swap: 1][imm:12]
           let val_type = (op_type & 0x7) as u32; // i8 i16 i32 i64 . f16 f32 f64
           let op_data = (op as i32) >> base_shift;
           let dst = op_data & 0xf;
@@ -547,15 +548,16 @@ fn run(program: &mut Program) {
           let res = op_or(stack_get(&val_stack,src1 as usize + 1),op_data as i64 as u64,val_type);
           stack_set(res,&mut val_stack,dst as usize)
         }
-        // TODO? split binary-op into one op-code per operation
-        0x50 => { // binary-op [dst:4][src1:4][src2:4][bin_op:4][cmp-type:3][val-type:3]
+        0x50..=0x57 => { // binary-op[val-type:3] [bin_op:4][dst:4][src1:4][src2:4][cmp-type:3]
+          let val_type = op_type & 0x7; // i8 i16 i32 i64 . f16 f32 f64
+          let bin_op = op_data & 0xf;
+          let op_data = op_data >> 4;
           let dst = op_data & 0xf;
           let op_data = op_data >> 4;
           let src1 = op_data & 0xf;
           let op_data = op_data >> 4;
           let src2 = op_data & 0xf;
           let op_data = op_data >> 4;
-          let bin_op = op_data & 0xf;
           const OP_CMP: u32 = 0;
           const OP_ADD: u32 = 1;
           const OP_SUB: u32 = 2;
@@ -566,9 +568,6 @@ fn run(program: &mut Program) {
           const OP_SHL: u32 = 11;
           const OP_LSHR: u32 = 12;
           const OP_ASHR: u32 = 13;
-          let op_data = op_data >> 4;
-          let val_type = op_data & 0x7; // i8 i16 i32 i64 . f16 f32 f64
-          let op_data = op_data >> 3;
           let res = match bin_op {
             OP_CMP => {
               let cmp_type = op_data & 0x7; // eq ne . . lt le ult ule
@@ -636,15 +635,14 @@ fn run(program: &mut Program) {
           };
           stack_set(res,&mut val_stack,dst as usize)
         }
-        0x51 => { // unary-op [dst:4][src:4][un_op:4][val-type:3]
+        0x58..=0x5f => { // unary-op[val-type:3] [un_op:4][dst:4][src:4]
+          let val_type = op_type & 0x7; // i8 i16 i32 i64 . f16 f32 f64
+          let un_op = op_data & 0xf;
+          let op_data = op_data >> 4;
           let dst = op_data & 0xf;
           let op_data = op_data >> 4;
           let src = op_data & 0xf;
           let op_data = op_data >> 4;
-          let un_op = op_data & 0xf;
-          let op_data = op_data >> 4;
-          let val_type = op_data & 0x7; // i8 i16 i32 i64 . f16 f32 f64
-          let op_data = op_data >> 3;
           const OP_NEG: u32 = 0;
           const OP_NOT: u32 = 1;
           const OP_SHLI: u32 = 2;
@@ -685,13 +683,12 @@ fn run(program: &mut Program) {
           };
           stack_set(res,&mut val_stack,dst as usize)
         }
-        0x52 => { // cvt [dst:4][src:4][src-type:4][dst-type:4]
+        0x60..=0x6f => { // cvt[signed:1][dst_type:3] [dst:4][src:4][src-type:3]
+          let signed = (op_type & 0x8) != 0;
+          let dst_type = op_type & 0x7;
           let dst = op_data & 0xf;
           let op_data = op_data >> 4;
           let src = op_data & 0xf;
-          let op_data = op_data >> 4;
-          let signed = (op_data & 0x8) != 0;
-          let dst_type = op_data & 0x7;
           let op_data = op_data >> 4;
           let src_type = op_data & 0x7;
           let res = op_cvt(stack_get(&val_stack,src as usize + 1),src_type,signed,dst_type);
@@ -757,26 +754,26 @@ fn run(program: &mut Program) {
             let val = stack_get(&val_stack,(src as usize)+1);
             stack_set(val,&mut val_stack,dst as usize);
         }
-        0x89 => { // copy [discard:4][src:10][dst:10]
+        0x89 => { // copy [discard:4][dst:10][src:10]
             let to_drop = (op_data & 0xf) as usize;
             let op_data = op_data >> 4;
-            let src = (op_data & 0x3ff) as usize + 1;
-            let dst = (op_data >> 10) as usize;
+            let dst = (op_data & 0x3ff) as usize;
+            let src = (op_data >> 10) as usize + 1;
             let val = stack_get(&val_stack,src);
             if to_drop > val_stack.len() { panic!("stack underflow");}
             let new_length = val_stack.len() - to_drop;
             val_stack.truncate(new_length);
             stack_set(val,&mut val_stack,dst);
         }
-        0x8a => { // copy2 [discard:4][src1:4][src2:4][dst1:4][dst2:4]
+        0x8a => { // copy2 [discard:4][dst1:4][dst2:4][src1:4][src2:4]
             let to_drop = (op_data & 0xf) as usize;
             let op_data = op_data >> 4;
-            let src1 = (op_data & 0xf) as usize + 1;
-            let op_data = op_data >> 4;
-            let src2 = (op_data & 0xf) as usize + 1;
-            let op_data = op_data >> 4;
             let dst1 = (op_data & 0xf) as usize;
-            let dst2 = (op_data >> 4) as usize;
+            let op_data = op_data >> 4;
+            let dst2 = (op_data & 0xf) as usize;
+            let op_data = op_data >> 4;
+            let src1 = (op_data & 0xf) as usize + 1;
+            let src2 = (op_data >> 4) as usize + 1;
             let val1 = stack_get(&val_stack,src1);
             let val2 = stack_get(&val_stack,src2);
             if to_drop > val_stack.len() { panic!("stack underflow");}
@@ -785,17 +782,17 @@ fn run(program: &mut Program) {
             stack_set(val1,&mut val_stack,dst1);
             stack_set(val2,&mut val_stack,dst2);
         }
-        0x8b => { // copy3 [src1:4][src2:4][src3:4][dst1:4][dst2:4][dst3:4]
-            let src1 = op_data & 0xf;
-            let op_data = op_data >> 4;
-            let src2 = op_data & 0xf;
-            let op_data = op_data >> 4;
-            let src3 = op_data & 0xf;
-            let op_data = op_data >> 4;
+        0x8b => { // copy3 [dst1:4][dst2:4][dst3:4][src1:4][src2:4][src3:4]
             let dst1 = op_data & 0xf;
             let op_data = op_data >> 4;
             let dst2 = op_data & 0xf;
-            let dst3 = op_data >> 4;
+            let op_data = op_data >> 4;
+            let dst3 = op_data & 0xf;
+            let op_data = op_data >> 4;
+            let src1 = op_data & 0xf;
+            let op_data = op_data >> 4;
+            let src2 = op_data & 0xf;
+            let src3 = op_data >> 4;
             let val1 = stack_get(&val_stack,(src1 as usize)+1);
             let val2 = stack_get(&val_stack,(src2 as usize)+1);
             let val3 = stack_get(&val_stack,(src3 as usize)+1);
@@ -862,23 +859,25 @@ fn run(program: &mut Program) {
         _ => panic!("unknown op-code 0x{:x}",op_type),
       }
     }
+    for x in val_stack.drain(..) {
+      println!("{}",x);
+    }
 }
 
 fn load_file(file: &mut File) -> Option<Program> {
   let mut header_buf: [u64; 4] = [0; 4]; // [version][code-size][ro-data-size][rw-data-size]
   file.read_exact(u64_as_bytes_mut(&mut header_buf)).ok()?;
+  // TODO? change encoding to include start address
   let _version = header_buf[0];
-  let code_size = header_buf[1];
-  if (code_size & 1) != 0 { panic!("code_size should be a multiple of 2")}
+  // sizes are given in chunks of 8bytes
+  let code_size = 2*header_buf[1]; // convert u64 -> u32
   let ro_data_size = header_buf[2];
-  if (ro_data_size % 8) != 0 { panic!("ro_data_size should be a multiple of 8")}
   let rw_data_size = header_buf[3];
-  if (rw_data_size % 8) != 0 { panic!("rw_data_size should be a multiple of 8")}
   let mut code_buffer = unsafe{ Box::<[u32]>::new_uninit_slice(code_size as usize).assume_init() };
   file.read_exact(u32_as_bytes_mut(&mut code_buffer)).ok()?;
-  let mut ro_buffer = unsafe{ Box::<[u64]>::new_uninit_slice((ro_data_size/8) as usize).assume_init() };
+  let mut ro_buffer = unsafe{ Box::<[u64]>::new_uninit_slice(ro_data_size as usize).assume_init() };
   file.read_exact(u64_as_bytes_mut(&mut ro_buffer)).ok()?;
-  let mut rw_buffer = unsafe{ Box::<[u64]>::new_uninit_slice((rw_data_size/8) as usize).assume_init() };
+  let mut rw_buffer = unsafe{ Box::<[u64]>::new_uninit_slice(rw_data_size as usize).assume_init() };
   file.read_exact(u64_as_bytes_mut(&mut rw_buffer)).ok()?;
   return Some(Program{code: code_buffer,rodata: ro_buffer,rwdata: rw_buffer})
 }
