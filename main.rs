@@ -2,26 +2,6 @@ use std::fs::File;
 use std::io::Read;
 use std::io;
 
-fn bytes_as_u32(bytes: &[u8]) -> Option<&[i32]> {
-  if bytes.len() % 4 != 0 {
-    return None;
-  }
-  unsafe {
-    let ptr = bytes.as_ptr() as *const i32;
-    let len = bytes.len() / 4;
-    Some(std::slice::from_raw_parts(ptr, len))
-  }
-}
-fn bytes_as_u64(bytes: &[u8]) -> Option<&[i64]> {
-  if bytes.len() % 8 != 0 {
-    return None;
-  }
-  unsafe {
-    let ptr = bytes.as_ptr() as *const i64;
-    let len = bytes.len() / 8;
-    Some(std::slice::from_raw_parts(ptr, len))
-  }
-}
 fn u64_as_bytes_mut(ints: &mut [u64]) -> &mut[u8] {
   unsafe {
     let ptr = ints.as_ptr() as *mut u8;
@@ -56,7 +36,6 @@ fn local_addr_to_ptr(local_addr: usize) -> u64 {
   return local_addr as u64 | PTR_LOCAL;
 }
 
-// TODO? unified address space (split virtual memory into chunks, resolve underlying address on memory read/write)
 struct Program{
   code: Box<[u32]>,
   ip: u64,
