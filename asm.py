@@ -12,42 +12,66 @@ class Label:
   def __repr__(self):
     return f"Label({self.name})"
 
+def expectStackLocation(val,minIndex,maxIndex):
+  if type(val) != StackLocation:
+    raise Exception("expected stack location got: "+type(val))
+  if val.index < minIndex or val.index > maxIndex:
+    raise Exception(f"stack index {val.index} outside allowed range {minIndex} to {maxIndex}")
+  return val
+
+def valTypeId(name):
+  return ["i8","i16","i32","i64","","f16","f32","f64"].index(name)
+def cmpTypeId(name):
+  return ["eq","ne","","","lt","le","ult","ule"].index(name)
+def jumpTypeId(name):
+  return ["jmp.abs","call.abs","jmp","call","jnz","jz","jnz pop","jz pop"].index(name)
+def binOpId(name):
+  return ["cmp","add","sub","mul","","","","","and","or","xor","shl","lshr","ashr"].index(name)
+
 class OpLoadi:
   def __init__(self,dst,value,*,shift):
     self.value = value
-    self.dst = dst
+    self.dst = expectStackLocation(dst,0,15)
     self.shift = shift
   def __repr__(self):
     return f"OpLoadi(dst={self.dst},value={self.value},shift={self.shift})"
+  def generate(self):
+    return self.value << 12 | (self.dst.index & 0xf) << 8 | (self.shift & 0x7)
 
 class OpBinary:
   def __init__(self,base_op,dst,src1,src2,*,val_type,cmp_type):
     self.base_op = base_op
     self.val_type = val_type
     self.cmp_type = cmp_type
-    self.dst = dst
-    self.src1 = src1
-    self.src2 = src2
+    self.dst = expectStackLocation(dst,0,15)
+    self.src1 = expectStackLocation(src1,1,16)
+    self.src2 = expectStackLocation(src2,1,16)
   def __repr__(self):
     return f"OpBinary({self.base_op},dst={self.dst},src1={self.src1},src2={self.src2},val_type={self.val_type},cmp_type={self.cmp_type})"
+  def generate(self):
+    return (cmpTypeId(self.cmp_type) << 24 if self.cmp_type else 0) | (self.src1.index & 0xf) << 20 | (self.src1.index & 0xf) << 16 | (self.dst.index & 0xf) << 12 | binOpId(self.base_op) << 8 | (valTypeId(self.val_type) | 0x30)
 
 class OpCmpImm:
   def __init__(self,dst,src1,src2,*,val_type,cmp_type,swap_args):
     self.val_type = val_type
     self.cmp_type = cmp_type
     self.swap_args = swap_args
-    self.dst = dst
-    self.src1 = src1
+    self.dst = expectStackLocation(dst,0,15)
+    self.src1 = expectStackLocation(src1,1,16)
     self.src2 = src2
   def __repr__(self):
     return f"OpCmpImm(dst={self.dst},src1={self.src1},src2={self.src2},val_type={self.val_type},cmp_type={self.cmp_type},swap_args={self.swap_args})"
+  def generate(self):
+    if self.val_type[0] == "f": raise Exception("float constants are not supported")
+    if type(self.src2) != int: raise Exception("unsupported constant type: "+type(self.src2))
+    return self.src2 << 20 | ((0x8 if self.swap_args else 0) | cmpTypeId(self.cmp_type) ) << 16 | (self.src1.index & 0xf) << 12 | (self.dst.index & 0xf) << 8 | (valTypeId(self.val_type) | 0x30)
 
 class OpBinaryImm:
   def __init__(self,base_op,dst,src1,src2,*,val_type):
     self.base_op = base_op
     self.val_type = val_type
-    self.dst = dst
-    self.src1 = src1
+    self.dst = expectStackLocation(dst,0,15)
+    self.src1 = expectStackLocation(src1,1,16)
     self.src2 = src2
   def __repr__(self):
     return f"OpBinaryImm({self.base_op},dst={self.dst},src1={self.src1},src2={self.src2},val_type={self.val_type})"
@@ -56,8 +80,8 @@ class OpShiftImm:
   def __init__(self,base_op,dst,src1,src2,*,val_type):
     self.base_op = base_op
     self.val_type = val_type
-    self.dst = dst
-    self.src1 = src1
+    self.dst = expectStackLocation(dst,0,15)
+    self.src1 = expectStackLocation(src1,1,16)
     self.src2 = src2
   def __repr__(self):
     return f"OpShiftImm({self.base_op},dst={self.dst},src1={self.src1},src2={self.src2},val_type={self.val_type})"
@@ -66,8 +90,8 @@ class OpUnary:
   def __init__(self,base_op,dst,src,*,val_type):
     self.base_op = base_op
     self.val_type = val_type
-    self.dst = dst
-    self.src = src
+    self.dst = expectStackLocation(dst,0,15)
+    self.src = expectStackLocation(src,1,16)
   def __repr__(self):
     return f"OpUnary({self.base_op},dst={self.dst},src={self.src},val_type={self.val_type})"
 
@@ -76,22 +100,26 @@ class OpCvt:
     self.src_type = src_type
     self.dst_type = dst_type
     self.signed = signed
-    self.dst = dst
-    self.src = src
+    self.dst = expectStackLocation(dst,0,15)
+    self.src = expectStackLocation(src,1,16)
   def __repr__(self):
     return f"OpCvt(signed={self.signed},dst={self.dst},src={self.src},src_type={self.src_type},dst_type={self.dst_type})"
 
 class OpJmp:
-  def __init__(self,jmp_type,target):
+  def __init__(self,jmp_type,target,*,is_long_jump=False):
     self.jmp_type = jmp_type
+    self.is_long_jump = is_long_jump
     self.target = target
   def __repr__(self):
     return f"OpJmp({self.jmp_type},target={self.target})"
+  def generate(self):
+    return self.target << 8 | ((0x8 if self.is_long_jump else 0) | jumpTypeId(self.jmp_type) | 0x20)
 
 class OpJmpIf:
-  def __init__(self,jmp_type,arg,target):
+  def __init__(self,jmp_type,arg,target,*,is_long_jump=False):
     self.jmp_type = jmp_type
-    self.arg = arg
+    self.is_long_jump = is_long_jump
+    self.arg = expectStackLocation(arg,1,16)
     self.target = target
   def __repr__(self):
     return f"OpJmpIf({self.jmp_type},arg={self.arg},target={self.target})"
@@ -104,16 +132,16 @@ class OpRet:
 
 class OpCopy:
   def __init__(self,dst,src,*,drop_count):
-    self.dst = dst
-    self.src = src
+    self.dst = expectStackLocation(dst,0,15)
+    self.src = expectStackLocation(src,1,16)
     self.drop_count = drop_count
   def __repr__(self):
     return f"OpCopy(dst={self.dst},src={self.src},drop_count={self.drop_count})"
 
 class OpSwap:
   def __init__(self,loc1,loc2):
-    self.loc1 = loc1
-    self.loc2 = loc2
+    self.loc1 = expectStackLocation(loc1,1,16)
+    self.loc2 = expectStackLocation(loc2,1,16)
   def __repr__(self):
     return f"OpSwap(loc1={self.loc1},loc2={self.loc2})"
 
@@ -152,6 +180,10 @@ def parseValType(val_type):
     return val_type
   raise Exception("unsupported val_type: "+val_type)
 
+LOADI_MIN_VAL = -0x80000
+LOADI_MAX_VAL = 0x7ffff
+LOADI_MASK = 0xfffff
+
 def parseLine(line):
   line = line.strip()
   hash_pos = line.find('#')
@@ -165,11 +197,21 @@ def parseLine(line):
   if op_code == "loadi":
     dst = parseLoc(args[0])
     arg = parseInt(args[1])
+    if arg > LOADI_MAX_VAL or arg < LOADI_MIN_VAL:
+      raise Exception(f"argument of loadi has to be between {LOADI_MIN_VAL} and {LOADI_MAX_VAL}")
+    ## TODO? automatically split value into multiple loadi's
     return [OpLoadi(dst,arg, shift = 0)]
   elif op_code.startswith("loadi."):
     dst = parseLoc(args[0])
     arg = parseInt(args[1])
+    if arg > LOADI_MAX_VAL or arg < LOADI_MIN_VAL:
+      raise Exception(f"argument of loadi has to be between {LOADI_MIN_VAL} and {LOADI_MAX_VAL}")
     shift = int(op_code[len("loadi."):])
+    if shift < 0 or shift > 56:
+      raise Exception(f"shift has to be between 0 and 56 got: {shift}")
+    if (shift % 8) != 0:
+      raise Exception(f"shift has to be divisible by 8 got: {shift}")
+    shift //= 8
     return [OpLoadi(dst,arg, shift = shift)]
   ## TODO: memory operations
   elif (op_code.startswith("cmp.") or op_code.startswith("cmpi.") or
@@ -243,18 +285,17 @@ def parseLine(line):
     src = parseLoc(args[1])
     return [OpCvt(dst, src,src_type = src_type,signed = signed,dst_type = dst_type)]
   elif op_code == "jmp" or op_code == "call" or op_code == "jmp.abs" or op_code == "call.abs":
-    target = parseArg(args[0])
+    target = parseArg(args[0]) # TODO check target range
     return [OpJmp(op_code, target)]
   elif op_code == "ret":
     return [OpRet()]
   elif op_code == "jz" or op_code == "jnz":
+    target = parseArg(args[1]) # TODO check target range
     if args[0] == "pop":
-      op_code = op_code + " pop"
-      arg = None
+      return [OpJmp(op_code + " pop", target)]
     else:
       arg = parseLoc(args[0])
-    target = parseArg(args[1])
-    return [OpJmpIf(op_code, arg, target)]
+      return [OpJmpIf(op_code, arg, target)]
   elif op_code == "copy":
     loc1 = parseLoc(args[0])
     loc2 = parseLoc(args[1])
@@ -276,7 +317,9 @@ def parse(code):
 
 def parseFile(srcFile="src.txt"):
   with open(srcFile,mode="r") as f:
-    return parse(f.read())
+    ops = parse(f.read())
+  print(*ops,sep='\n')
+  return [op.generate() for op in ops]
 
 def writeU32(f,val):
     f.write(bytes([(val >> 8*s) & 0xFF for s in range(4)]))
