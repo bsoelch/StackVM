@@ -833,9 +833,9 @@ fn run(program: &mut Program) {
           let src_type = op_data & 0x7;
           if TRACE {
             if signed {
-                println!("cvts.{}.{} @{} @{}",val_type_name(dst_type),val_type_name(src_type),dst,src);
+                println!("cvts.{}.{} @{} @{}",val_type_name(src_type),val_type_name(dst_type),dst,src);
             } else {
-                println!("cvtu.{}.{} @{} @{}",val_type_name(dst_type),val_type_name(src_type),dst,src);
+                println!("cvtu.{}.{} @{} @{}",val_type_name(src_type),val_type_name(dst_type),dst,src);
             }
           }
           let res = op_cvt(stack_get(&val_stack,src),src_type,signed,dst_type);

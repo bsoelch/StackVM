@@ -71,6 +71,16 @@ class OpUnary:
   def __repr__(self):
     return f"OpUnary({self.base_op},dst={self.dst},src={self.src},val_type={self.val_type})"
 
+class OpCvt:
+  def __init__(self,dst,src,*,src_type,signed,dst_type):
+    self.src_type = src_type
+    self.dst_type = dst_type
+    self.signed = signed
+    self.dst = dst
+    self.src = src
+  def __repr__(self):
+    return f"OpCvt(signed={self.signed},dst={self.dst},src={self.src},src_type={self.src_type},dst_type={self.dst_type})"
+
 class OpJmp:
   def __init__(self,jmp_type,target):
     self.jmp_type = jmp_type
@@ -224,7 +234,14 @@ def parseLine(line):
     dst = parseLoc(args[0])
     src = parseLoc(args[1])
     return [OpUnary(base_op, dst, src,val_type = val_type)]
-  ## TODO: conversions
+  elif op_code.startswith("cvts.") or op_code.startswith("cvtu."):
+    base_op, src_type, dst_type = op_code.split('.')
+    src_type = parseValType(src_type)
+    dst_type = parseValType(dst_type)
+    signed = base_op == "cvts"
+    dst = parseLoc(args[0])
+    src = parseLoc(args[1])
+    return [OpCvt(dst, src,src_type = src_type,signed = signed,dst_type = dst_type)]
   elif op_code == "jmp" or op_code == "call" or op_code == "jmp.abs" or op_code == "call.abs":
     target = parseArg(args[0])
     return [OpJmp(op_code, target)]
