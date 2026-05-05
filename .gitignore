@@ -7,3 +7,4 @@ main
 *.zip
 *.cctbc
 src.txt
+tmp/*
