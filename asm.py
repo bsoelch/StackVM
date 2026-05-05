@@ -40,7 +40,7 @@ class OpLoadi:
   def __repr__(self):
     return f"OpLoadi(dst={self.dst},value={self.value},shift={self.shift})"
   def generate(self):
-    return self.value << 12 | (self.dst.index & 0xf) << 8 | (self.shift & 0x7)
+    return self.value << 12 | (self.dst.index & 0xf) << 8 | (self.shift & 0xf)
 
 class OpBinary:
   def __init__(self,base_op,dst,src1,src2,*,val_type,cmp_type):
@@ -231,11 +231,11 @@ def parseLine(line):
     if arg > LOADI_MAX_VAL or arg < LOADI_MIN_VAL:
       raise Exception(f"argument of loadi has to be between {LOADI_MIN_VAL} and {LOADI_MAX_VAL}")
     shift = int(op_code[len("loadi."):])
-    if shift < 0 or shift > 56:
-      raise Exception(f"shift has to be between 0 and 56 got: {shift}")
-    if (shift % 8) != 0:
-      raise Exception(f"shift has to be divisible by 8 got: {shift}")
-    shift //= 8
+    if shift < 0 or shift > 44:
+      raise Exception(f"shift has to be between 0 and 44 got: {shift}")
+    if (shift % 4) != 0:
+      raise Exception(f"shift has to be divisible by 4 got: {shift}")
+    shift //= 4
     return [OpLoadi(dst,arg, shift = shift)]
   ## TODO: memory operations
   elif (op_code.startswith("cmp.") or op_code.startswith("cmpi.") or

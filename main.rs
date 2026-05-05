@@ -430,12 +430,12 @@ fn run(program: &mut Program) {
       let base_shift = 8; // how much has op-data been shifted
       if TRACE {println!("{:09}: {:08x}  {:?}",ip-1,op,val_stack);}
       match op_type {
-        0x0..=0x7 => { // load-immediate[shift:3] [dst:4][data:*s]
+        0x00..=0x0b => { // load-immediate[shift:3] [dst:4][data:*s]
           let dst = op_data & 0xf;
           let op_data = (op as i32) >> (base_shift+4);
           // sign-extend 20-bit value in op_data
-          let val = ((op_data as i64) << 8*op_type) as u64; // shift value by 0 to 56 bits
-          if TRACE {println!("loadi.{} @{} ${}",op_type,dst,op_data);}
+          let val = ((op_data as i64) << 4*op_type) as u64; // shift value by 0 to 44 bits
+          if TRACE {println!("loadi.{} @{} ${}",op_type*4,dst,op_data);}
           if dst == 0 {
             val_stack.push(val);
           } else {
@@ -444,36 +444,45 @@ fn run(program: &mut Program) {
             stack_set(val,&mut val_stack,dst as usize);
           }
         }
-        0x8..=0xB => { // local-geti[size:2] [dst:4][offset:*u]
-          let size = 1 << (op_type&0x3); // 1,2,4,8
-          let dst = op_data & 0xf;
+        0x0c => { // local-addr [dst:4][offset:*u]
+          let dst = (op_data & 0xf) as usize;
           let offset = (op_data >> 4) as u64;
+          stack_set(rbp + offset,&mut val_stack,dst);
+          if TRACE {println!("addr.local @{} ${}",dst,op_data);}
+        }
+        0x0d => { // ip-relative-addr [dst:4][offset:*s]
+          let op_data = (op as i32) >> (base_shift+4);
+          let dst = (op_data & 0xf) as usize;
+          let offset = (op_data >> 4) as i64;
+          stack_set((ip as i64 + offset) as u64,&mut val_stack,dst);
+          if TRACE {println!("addr.ip @{} ${}",dst,op_data);}
+        }
+        // TODO? global-addr (address relative to ro/rw start)
+        // 0xE 0xF
+        // TODO? ip-relative load
+        0x10 => { // load.local [dst:4][size:2][offset:*u]
+          let dst = (op_data & 0xf) as usize;
+          let op_data = op_data >> 4;
+          let size = (op_data&0x3) as usize; // 1,2,4,8
+          let offset = (op_data >> 2) as u64;
           let addr = rbp + offset;
           let mut buf: [u64;1] = [0;1];
           read_data(&program.allocations,addr,&mut u64_as_bytes_mut(&mut buf)[0..size]);
-          stack_set(buf[0],&mut val_stack,dst as usize);
-          if TRACE {println!("local-get.{} @{} ${}",size,dst,op_data);}
+          stack_set(buf[0],&mut val_stack,dst);
+          if TRACE {println!("load.local.{} @{} ${}",size,dst,op_data);}
         }
-        0xC..=0xF => { // local-seti[size:2] [src:4][offset:*u]
-          let size = 1 << (op_type&0x3); // 1,2,4,8
+        0x11 => { // store.local [src:4][size:2][offset:*u]
           let src = (op_data & 0xf) as usize + 1;
-          let offset = (op_data >> 4) as u64;
+          let op_data = op_data >> 4;
+          let size = (op_data&0x3) as usize; // 1,2,4,8
+          let offset = (op_data >> 2) as u64;
           let addr = rbp + offset;
           let src_val = stack_get(&val_stack,src);
           let src_vals: [u64;1] = [src_val;1];
           write_data(&mut program.allocations,addr,&u64_as_bytes(&src_vals)[0..size]);
-          if TRACE {println!("local-set.{} @{} ${}",size,src,op_data);}
+          if TRACE {println!("store.local.{} @{} ${}",size,src,op_data);}
         }
-        0x10 => { // local-addr [dst:4][offset:*u]
-          let dst = (op_data & 0xf) as usize;
-          let offset = (op_data >> 4) as u64;
-          stack_set(rbp + offset,&mut val_stack,dst);
-          if TRACE {println!("local-addr @{} ${}",dst,op_data);}
-        }
-        0x11 => { // local-alloc
-          panic!("unimplemented: local-alloc");
-        }
-        0x12|0x13 => { // ptr-get/ptr-set [dst:4][src?4][size:2][offset:*u]
+        0x13|0x14 => { // load/store [dst:4][src?4][size:2][offset:*u]
           let is_set = op_type == 0x13;
           let mut op_data = op_data;
           let dst = op_data & 0xf;
@@ -489,9 +498,9 @@ fn run(program: &mut Program) {
           let addr = stack_get(&val_stack,dst as usize + 1) + (op_data as u64);
           if TRACE {
             if is_set {
-                println!("ptr-set.{} @{} @{} ${}",size,dst,src,op_data);
+                println!("store.{} @{} @{} ${}",size,dst,src,op_data);
             } else {
-                println!("ptr-get.{} @{} ${}",size,dst,op_data);
+                println!("load.{} @{} ${}",size,dst,op_data);
             }
           }
           if is_set {
@@ -500,7 +509,10 @@ fn run(program: &mut Program) {
             read_data(&program.allocations,addr,&mut u64_as_bytes_mut(&mut buf)[0..size]);
           }
         }
-        // 0x14-0x1f
+        0x15 => { // local-alloc
+          panic!("unimplemented: local-alloc");
+        }
+        // 0x16-0x1f
         0x20..=0x2f => { // jump/call[offset:24s], ret, jz/jnz [src:4][offset:20s]
           const JUMP_TYPE_JMP_ABS: u32 = 0;
           const JUMP_TYPE_CALL_ABS: u32 = 1;
