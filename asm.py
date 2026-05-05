@@ -6,6 +6,13 @@ class StackLocation:
   def __repr__(self):
     return f"StackLocation({self.index})"
 
+class OffsetStackLocation:
+  def __init__(self,base,offset):
+    self.base = base
+    self.offset = offset
+  def __repr__(self):
+    return f"OffsetStackLocation({self.base},{self.offset})"
+
 class IpRelativeAddress:
   def __init__(self,offset):
     self.offset = offset
@@ -26,7 +33,7 @@ class Label:
 
 def expectStackLocation(val,minIndex,maxIndex):
   if type(val) != StackLocation:
-    raise Exception("expected stack location got: "+type(val))
+    raise Exception("expected stack location got: "+str(type(val)))
   if val.index < minIndex or val.index > maxIndex:
     raise Exception(f"stack index {val.index} outside allowed range {minIndex} to {maxIndex}")
   return val
@@ -43,6 +50,11 @@ def unaryOpId(name):
   return ["neg","not","shl","lshr","ashr"].index(name)
 def binImmOpId(name):
   return {"add":0x38,"mul":0x40,"and":0x48,"or":0x4c}[name]
+def encodeSize(size):
+  return [1,2,4,8].index(size)
+def loadBaseId(name,is_store):
+  return {("bp",False):0x12,("bp",True):0x13,("ip",False):0x14,("ro",False):0x15,("rw",False):0x16,("rw",True):0x17}[(name,is_store)]
+LOAD2_FLAG = 0x8
 
 class OpLoadi:
   def __init__(self,dst,value,*,shift):
@@ -53,6 +65,54 @@ class OpLoadi:
     return f"OpLoadi(dst={self.dst},value={self.value},shift={self.shift})"
   def generate(self):
     return self.value << 12 | (self.dst.index & 0xf) << 8 | (self.shift & 0xf)
+
+class OpLoad:
+  def __init__(self,is_store,size,dst,src,offset):
+    self.is_store = is_store
+    self.size = size
+    self.dst = expectStackLocation(dst,0,15)
+    self.src = expectStackLocation(src,1,15)
+    self.offset = offset
+  def __repr__(self):
+    return f"OpLoad(is_store={self.is_store},size={self.size},dst={self.dst},offset={self.offset})"
+  def generate(self):
+    return self.offset << 18 | (encodeSize(self.size) << 16) | ((self.src.index-1) & 0xf) << 12 | (self.dst.index & 0xf) << 8 | (0x11 if self.is_store else 0x10)
+
+class OpLoadRelative:
+  def __init__(self,base,is_store,size,dst,offset):
+    self.base = base
+    self.is_store = is_store
+    self.size = size
+    self.dst = expectStackLocation(dst,0,15)
+    self.offset = offset
+  def __repr__(self):
+    return f"OpLoadRelative(base={self.base},is_store={self.is_store},size={self.size},dst={self.dst},offset={self.offset})"
+  def generate(self):
+    return self.offset << 14 | (encodeSize(self.size) << 12) | (self.dst.index & 0xf) << 8 | loadBaseId(self.base,self.is_store)
+
+class OpLoad2:
+  def __init__(self,is_store,dst1,dst2,src,offset):
+    self.is_store = is_store
+    self.dst1 = expectStackLocation(dst1,0,15)
+    self.dst2 = expectStackLocation(dst2,0,15)
+    self.src = expectStackLocation(src,1,15)
+    self.offset = offset
+  def __repr__(self):
+    return f"OpLoad2(is_store={self.is_store},dst1={self.dst1},dst2={self.dst2},offset={self.offset})"
+  def generate(self):
+    return self.offset << 20 | ((self.src.index-1) & 0xf) << 16 | (self.dst2.index & 0xf) << 12 | (self.dst1.index & 0xf) << 8 | (0x11 if self.is_store else 0x10) | LOAD2_FLAG
+
+class OpLoad2Relative:
+  def __init__(self,base,is_store,dst1,dst2,offset):
+    self.base = base
+    self.is_store = is_store
+    self.dst1 = expectStackLocation(dst1,0,15)
+    self.dst2 = expectStackLocation(dst2,0,15)
+    self.offset = offset
+  def __repr__(self):
+    return f"OpLoad2Relative(base={self.base},is_store={self.is_store},dst1={self.dst1},dst2={self.dst2},offset={self.offset})"
+  def generate(self):
+    return self.offset << 16 | (self.dst2.index & 0xf) << 12 | (self.dst1.index & 0xf) << 8 | loadBaseId(self.base,self.is_store) | LOAD2_FLAG
 
 class OpBinary:
   def __init__(self,base_op,dst,src1,src2,*,val_type,cmp_type):
@@ -186,13 +246,16 @@ def parseLoc(val):
   if val[0] != '@':
     raise Exception("location has to start with @ got: "+val)
   if val.startswith("@ip"):
-    if len(val) > 3 and val[3] not in "+-":raise Exception("offset has to start with + or -: "+val)
+    if len(val) == 3: return IpRelativeAddress(0)
+    if val[3] not in "+-":raise Exception("offset has to start with + or -: "+val)
     return IpRelativeAddress(int(val[3:]))
   if val.startswith("@bp"):
-    if len(val) > 3 and val[3] not in "+-":raise Exception("offset has to start with + or -: "+val)
+    if len(val) == 3: return LocalAddress(0)
+    if val[3] not in "+-":raise Exception("offset has to start with + or -: "+val)
     return LocalAddress(int(val[3:]))
   if "+" in val:
-    raise Exception("unsupported location: "+val)
+    base,offset = val.split("+")
+    return OffsetStackLocation(int(base[1:]),int(offset))
   return StackLocation(int(val[1:]))
 
 def parseInt(val):
@@ -266,12 +329,34 @@ def parseLine(line):
       raise Exception(f"size has to be one of 1,2,4,8 got: {size}")
     dst = parseLoc(args[0])
     addr = parseArg(args[1])
-    raise Exception(f"load/store is not implemented: {size} {dst} {addr}")
+    ## TODO: check offset range
+    if type(addr) == IpRelativeAddress:
+      if is_store: raise Exception("cannot store to ip-relative address")
+      return [OpLoadRelative("ip",False,size,dst,addr.offset)]
+    elif type(addr) == LocalAddress:
+      return [OpLoadRelative("bp",is_store,size,dst,addr.offset)]
+    elif type(addr) == OffsetStackLocation:
+      return [OpLoad(is_store,size,dst,StackLocation(addr.base),addr.offset)]
+    elif type(addr) == StackLocation:
+      return [OpLoad(is_store,size,dst,addr,0)]
+    else:
+      raise Exception(f"load/store is not implemented: {size} {dst} {addr}")
   elif op_code == "load2" or op_code == "store2":
+    is_store = (op_code[0] == 's')
     dst1 = parseLoc(args[0])
     dst2 = parseLoc(args[1])
     addr = parseArg(args[2])
-    raise Exception(f"load2/store2 is not implemented: {dst1} {dst2} {addr}")
+    if type(addr) == IpRelativeAddress:
+      if is_store: raise Exception("cannot store to ip-relative address")
+      return [OpLoad2Relative("ip",False,dst1,dst2,addr.offset)]
+    elif type(addr) == LocalAddress:
+      return [OpLoad2Relative("bp",is_store,dst1,dst2,addr.offset)]
+    elif type(addr) == OffsetStackLocation:
+      return [OpLoad2(is_store,dst1,dst2,StackLocation(addr.base),addr.offset)]
+    elif type(addr) == StackLocation:
+      return [OpLoad2(is_store,dst1,dst2,addr,0)]
+    else:
+      raise Exception(f"load2/store2 is not implemented: {dst1} {dst2} {addr}")
   elif op_code.startswith("addr."):
     dst = parseLoc(args[0])
     addr = parseArg(args[1])
