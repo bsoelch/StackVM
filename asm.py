@@ -239,10 +239,14 @@ def parseLine(line):
       raise Exception(f"shift has to be divisible by 4 got: {shift}")
     shift //= 4
     return [OpLoadi(dst,arg, shift = shift)]
-  elif op_code.startswith("load."):
-    raise Exception(f"load is not implemented")
-  elif op_code.startswith("store."):
-    raise Exception(f"store is not implemented")
+  elif op_code.startswith("load.") or op_code.startswith("store."):
+    is_store = (op_code[0] == 's')
+    size = int(op_code[(len("store.") if is_store else len("load.")):])
+    if size not in [1,2,4,8]:
+      raise Exception(f"size has to be one of 1,2,4,8 got: {size}")
+    raise Exception(f"load/store is not implemented")
+  elif op_code == "load2" or op_code == "store2":
+    raise Exception(f"load2/store2 is not implemented")
   elif op_code.startswith("addr."):
     raise Exception(f"addr is not implemented")
   elif (op_code.startswith("cmp.") or op_code.startswith("cmpi.") or

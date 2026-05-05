@@ -466,34 +466,63 @@ fn run(program: &mut Program) {
         }
         // TODO? global-addr (address relative to ro/rw start)
         // 0xE 0xF
-        0x10|0x11 => { // load/store [dst:4][src?4][size:2][offset:*u]
-          let is_set = op_type == 0x13;
-          let mut op_data = op_data;
-          let dst = op_data & 0xf;
-          op_data >>= 4;
+        0x10|0x11 => { // load/store [dst:4][src:4][size:2][offset:14u]
+          let is_store = op_type == 0x11;
+          let dst = (op_data & 0xf) as usize;
+          let op_data = op_data >> 4;
           let mut buf: [u64;1] = [0;1];
-          let src = (op_data & 0xf) as usize + 1; // needed for tracing
-          if is_set {
-            op_data >>= 4;
-            buf[0] = stack_get(&val_stack,src);
+          let ptr = (op_data & 0xf) as usize + 1; // needed for tracing
+          let op_data = op_data >> 4;
+          if is_store {
+            buf[0] = stack_get(&val_stack,dst + 1);
           }
           let size = 1 << (op_data & 0x3); // 1,2,4,8
-          op_data >>= 2;
-          let addr = stack_get(&val_stack,dst as usize + 1) + (op_data as u64);
+          let op_data = op_data >> 2;
+          let addr = stack_get(&val_stack,ptr) + (op_data as u64);
           if TRACE {
-            if is_set {
-                println!("store.{} @{} @{} ${}",size,dst,src,op_data);
+            if is_store {
+                println!("store.{} @{} @{}+{}",size,dst,ptr,op_data);
             } else {
-                println!("load.{} @{} ${}",size,dst,op_data);
+                println!("load.{} @{} @{}+{}",size,dst,ptr,op_data);
             }
           }
-          if is_set {
+          if is_store {
             write_data(&mut program.allocations,addr,&u64_as_bytes(&buf)[0..size]);
           } else {
             read_data(&program.allocations,addr,&mut u64_as_bytes_mut(&mut buf)[0..size]);
+            stack_set(buf[0],&mut val_stack,dst);
           }
         }
-        0x12 => { // load.local [dst:4][size:2][offset:*u]
+        0x12|0x13 => { // load2/store2 [dst1:4][dst2:4][ptr:4][offset:12u]
+          let is_store = op_type == 0x13;
+          let dst1 = (op_data & 0xf) as usize;
+          let op_data = op_data >> 4;
+          let dst2 = (op_data & 0xf) as usize;
+          let op_data = op_data >> 4;
+          let mut buf: [u64;2] = [0;2];
+          let ptr = (op_data & 0xf) as usize + 1; // needed for tracing
+          let op_data = op_data >> 4;
+          if is_store {
+            buf[0] = stack_get(&val_stack,dst1 + 1);
+            buf[1] = stack_get(&val_stack,dst2 + 1);
+          }
+          let addr = stack_get(&val_stack,ptr) + (op_data as u64);
+          if TRACE {
+            if is_store {
+                println!("store2 @{} @{} @{}+{}",dst1,dst2,ptr,op_data);
+            } else {
+                println!("load2 @{} @{} @{}+{}",dst1,dst2,ptr,op_data);
+            }
+          }
+          if is_store {
+            write_data(&mut program.allocations,addr,u64_as_bytes(&buf));
+          } else {
+            read_data(&program.allocations,addr,u64_as_bytes_mut(&mut buf));
+            stack_set(buf[0],&mut val_stack,dst1);
+            stack_set(buf[1],&mut val_stack,dst2);
+          }
+        }
+        0x14 => { // load.local [dst:4][size:2][offset:18u]
           let dst = (op_data & 0xf) as usize;
           let op_data = op_data >> 4;
           let size = (op_data&0x3) as usize; // 1,2,4,8
@@ -504,7 +533,7 @@ fn run(program: &mut Program) {
           stack_set(buf[0],&mut val_stack,dst);
           if TRACE {println!("load.{} @{} @bp+{}",size,dst,op_data);}
         }
-        0x13 => { // store.local [src:4][size:2][offset:*u]
+        0x15 => { // store.local [src:4][size:2][offset:18u]
           let src = (op_data & 0xf) as usize + 1;
           let op_data = op_data >> 4;
           let size = (op_data&0x3) as usize; // 1,2,4,8
@@ -515,7 +544,7 @@ fn run(program: &mut Program) {
           write_data(&mut program.allocations,addr,&u64_as_bytes(&src_vals)[0..size]);
           if TRACE {println!("store.{} @{} @bp+{}",size,src,op_data);}
         }
-        0x14 => { // load.ip [dst:4][size:2][offset:*s]
+        0x16 => { // load.ip [dst:4][size:2][offset:18s]
           let dst = (op_data & 0xf) as usize;
           let op_data = (op as i32) >> base_shift + 4;
           let size = (op_data&0x3) as usize; // 1,2,4,8
@@ -528,11 +557,11 @@ fn run(program: &mut Program) {
           stack_set(buf[0],&mut val_stack,dst);
           if TRACE {println!("load.{} @{} @ip{}{}",size,dst,if op_data >= 0 {"+"}else{""},op_data);}
         }
-        // 15 -> reserved
-        0x16 => { // local-alloc [count:24s]
+        // 17 -> reserved
+        0x18 => { // local-alloc [count:24s]
           panic!("unimplemented: local-alloc");
         }
-        // 0x17-0x1f
+        // 0x19-0x1f
         0x20..=0x2f => { // jump/call[offset:24s], ret, jz/jnz [src:4][offset:20s]
           const JUMP_TYPE_JMP_ABS: u32 = 0;
           const JUMP_TYPE_CALL_ABS: u32 = 1;
