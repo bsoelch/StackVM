@@ -24,6 +24,13 @@ fn u64_as_bytes_box(ints: Box<[u64]>) -> Box<[u8]> {
     Box::from_raw(ptr::slice_from_raw_parts_mut(ptr, byte_count))
   }
 }
+fn u32_as_bytes(ints: &[u32]) -> &[u8] {
+  unsafe {
+    let ptr = ints.as_ptr() as *const u8;
+    let len = ints.len() * 4;
+    std::slice::from_raw_parts(ptr, len)
+  }
+}
 fn u32_as_bytes_mut(ints: &mut [u32]) -> &mut[u8] {
   unsafe {
     let ptr = ints.as_ptr() as *mut u8;
@@ -459,30 +466,7 @@ fn run(program: &mut Program) {
         }
         // TODO? global-addr (address relative to ro/rw start)
         // 0xE 0xF
-        // TODO? ip-relative load
-        0x10 => { // load.local [dst:4][size:2][offset:*u]
-          let dst = (op_data & 0xf) as usize;
-          let op_data = op_data >> 4;
-          let size = (op_data&0x3) as usize; // 1,2,4,8
-          let offset = (op_data >> 2) as u64;
-          let addr = rbp + offset;
-          let mut buf: [u64;1] = [0;1];
-          read_data(&program.allocations,addr,&mut u64_as_bytes_mut(&mut buf)[0..size]);
-          stack_set(buf[0],&mut val_stack,dst);
-          if TRACE {println!("load.local.{} @{} ${}",size,dst,op_data);}
-        }
-        0x11 => { // store.local [src:4][size:2][offset:*u]
-          let src = (op_data & 0xf) as usize + 1;
-          let op_data = op_data >> 4;
-          let size = (op_data&0x3) as usize; // 1,2,4,8
-          let offset = (op_data >> 2) as u64;
-          let addr = rbp + offset;
-          let src_val = stack_get(&val_stack,src);
-          let src_vals: [u64;1] = [src_val;1];
-          write_data(&mut program.allocations,addr,&u64_as_bytes(&src_vals)[0..size]);
-          if TRACE {println!("store.local.{} @{} ${}",size,src,op_data);}
-        }
-        0x13|0x14 => { // load/store [dst:4][src?4][size:2][offset:*u]
+        0x10|0x11 => { // load/store [dst:4][src?4][size:2][offset:*u]
           let is_set = op_type == 0x13;
           let mut op_data = op_data;
           let dst = op_data & 0xf;
@@ -509,10 +493,46 @@ fn run(program: &mut Program) {
             read_data(&program.allocations,addr,&mut u64_as_bytes_mut(&mut buf)[0..size]);
           }
         }
-        0x15 => { // local-alloc
+        0x12 => { // load.local [dst:4][size:2][offset:*u]
+          let dst = (op_data & 0xf) as usize;
+          let op_data = op_data >> 4;
+          let size = (op_data&0x3) as usize; // 1,2,4,8
+          let offset = (op_data >> 2) as u64;
+          let addr = rbp + offset;
+          let mut buf: [u64;1] = [0;1];
+          read_data(&program.allocations,addr,&mut u64_as_bytes_mut(&mut buf)[0..size]);
+          stack_set(buf[0],&mut val_stack,dst);
+          if TRACE {println!("load.{} @{} @bp+{}",size,dst,op_data);}
+        }
+        0x13 => { // store.local [src:4][size:2][offset:*u]
+          let src = (op_data & 0xf) as usize + 1;
+          let op_data = op_data >> 4;
+          let size = (op_data&0x3) as usize; // 1,2,4,8
+          let offset = (op_data >> 2) as u64;
+          let addr = rbp + offset;
+          let src_val = stack_get(&val_stack,src);
+          let src_vals: [u64;1] = [src_val;1];
+          write_data(&mut program.allocations,addr,&u64_as_bytes(&src_vals)[0..size]);
+          if TRACE {println!("store.{} @{} @bp+{}",size,src,op_data);}
+        }
+        0x14 => { // load.ip [dst:4][size:2][offset:*s]
+          let dst = (op_data & 0xf) as usize;
+          let op_data = (op as i32) >> base_shift + 4;
+          let size = (op_data&0x3) as usize; // 1,2,4,8
+          let offset = (op_data >> 2) as i64;
+          let addr = ((ip as i64) << 2 + offset) as usize;
+          let mut buf: [u64;1] = [0;1];
+          // TODO? will this lead to problems with aliasing
+          u64_as_bytes_mut(&mut buf).copy_from_slice(&u32_as_bytes(&program.code)[addr..(addr+8)]);
+          // read_data(&program.allocations,addr,&mut u64_as_bytes_mut(&mut buf)[0..size]);
+          stack_set(buf[0],&mut val_stack,dst);
+          if TRACE {println!("load.{} @{} @ip{}{}",size,dst,if op_data >= 0 {"+"}else{""},op_data);}
+        }
+        // 15 -> reserved
+        0x16 => { // local-alloc
           panic!("unimplemented: local-alloc");
         }
-        // 0x16-0x1f
+        // 0x17-0x1f
         0x20..=0x2f => { // jump/call[offset:24s], ret, jz/jnz [src:4][offset:20s]
           const JUMP_TYPE_JMP_ABS: u32 = 0;
           const JUMP_TYPE_CALL_ABS: u32 = 1;
