@@ -178,11 +178,13 @@ def parseLoc(val):
 def parseInt(val):
   if val[0] != '$':
     raise Exception("integer literal has to start with $ got: "+val)
+  ## TODO? $d,$f,$h -> f64/f32/f16  , $b -> binary int
   if val[1] == 'x': ## hex literal
     return int(val[2:],16)
   return int(val[1:])
 
 def parseArg(val):
+  ## offset-val: :label+offset, @<index>+offset, @ip+offset, @bp+offset
   if val[0] == '@':
     return parseLoc(val)
   if val[0] == ':':
@@ -237,7 +239,12 @@ def parseLine(line):
       raise Exception(f"shift has to be divisible by 4 got: {shift}")
     shift //= 4
     return [OpLoadi(dst,arg, shift = shift)]
-  ## TODO: memory operations
+  elif op_code.startswith("load."):
+    raise Exception(f"load is not implemented")
+  elif op_code.startswith("store."):
+    raise Exception(f"store is not implemented")
+  elif op_code.startswith("addr."):
+    raise Exception(f"addr is not implemented")
   elif (op_code.startswith("cmp.") or op_code.startswith("cmpi.") or
      op_code.startswith("add.") or op_code.startswith("addi.") or
      op_code.startswith("sub.") or op_code.startswith("subi.") or
@@ -308,6 +315,7 @@ def parseLine(line):
     dst = parseLoc(args[0])
     src = parseLoc(args[1])
     return [OpCvt(dst, src,src_type = src_type,signed = signed,dst_type = dst_type)]
+  ## TODO? seperate op-code for long-jump/long-call `ljmp`(?)
   elif op_code == "jmp" or op_code == "call" or op_code == "jmp.abs" or op_code == "call.abs":
     target = parseArg(args[0]) # TODO check target range
     return [OpJmp(op_code, target)]

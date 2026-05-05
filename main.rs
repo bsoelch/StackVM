@@ -529,7 +529,7 @@ fn run(program: &mut Program) {
           if TRACE {println!("load.{} @{} @ip{}{}",size,dst,if op_data >= 0 {"+"}else{""},op_data);}
         }
         // 15 -> reserved
-        0x16 => { // local-alloc
+        0x16 => { // local-alloc [count:24s]
           panic!("unimplemented: local-alloc");
         }
         // 0x17-0x1f
