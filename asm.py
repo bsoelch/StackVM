@@ -43,6 +43,8 @@ def encodeSize(size):
 def loadBaseId(name,is_store):
   return {("bp",False):0x12,("bp",True):0x13,("ip",False):0x14,("ro_data",False):0x15,("rw_data",False):0x16,("rw_data",True):0x17}[(name,is_store)]
 LOAD2_FLAG = 0x8
+def addrBaseId(name):
+  return {"bp":0x0c,"ip":0x0d,"ro_data":0x0e,"rw_data":0x0f}[name]
 
 class OpLoadi:
   def __init__(self,dst,value,*,shift):
@@ -55,52 +57,63 @@ class OpLoadi:
     return self.value << 12 | (self.dst.index & 0xf) << 8 | (self.shift & 0xf)
 
 class OpLoad:
-  def __init__(self,is_store,size,dst,src,offset):
+  def __init__(self,is_store,size,val,src,offset):
     self.is_store = is_store
     self.size = size
-    self.dst = expectStackLocation(dst,0,15)
+    self.val = expectStackLocation(val,0+self.is_store,15+self.is_store)
     self.src = expectStackLocation(src,1,15)
     self.offset = offset
   def __repr__(self):
-    return f"OpLoad(is_store={self.is_store},size={self.size},dst={self.dst},offset={self.offset})"
+    return f"OpLoad(is_store={self.is_store},size={self.size},val={self.val},offset={self.offset})"
   def generate(self):
-    return self.offset << 18 | (encodeSize(self.size) << 16) | ((self.src.index-1) & 0xf) << 12 | (self.dst.index & 0xf) << 8 | (0x11 if self.is_store else 0x10)
+    return self.offset << 18 | (encodeSize(self.size) << 16) | ((self.src.index-1) & 0xf) << 12 | ((self.val.index-self.is_store) & 0xf) << 8 | (0x11 if self.is_store else 0x10)
 
 class OpLoadRelative:
-  def __init__(self,base,is_store,size,dst,offset):
+  def __init__(self,base,is_store,size,val,offset):
     self.base = base
     self.is_store = is_store
     self.size = size
-    self.dst = expectStackLocation(dst,0,15)
+    self.val = expectStackLocation(val,0+self.is_store,15+self.is_store)
     self.offset = offset
   def __repr__(self):
-    return f"OpLoadRelative(base={self.base},is_store={self.is_store},size={self.size},dst={self.dst},offset={self.offset})"
+    return f"OpLoadRelative(base={self.base},is_store={self.is_store},size={self.size},val={self.val},offset={self.offset})"
   def generate(self):
-    return self.offset << 14 | (encodeSize(self.size) << 12) | (self.dst.index & 0xf) << 8 | loadBaseId(self.base,self.is_store)
+    return self.offset << 14 | (encodeSize(self.size) << 12) | ((self.val.index-self.is_store) & 0xf) << 8 | loadBaseId(self.base,self.is_store)
 
 class OpLoad2:
-  def __init__(self,is_store,dst1,dst2,src,offset):
+  def __init__(self,is_store,val1,val2,src,offset):
     self.is_store = is_store
-    self.dst1 = expectStackLocation(dst1,0,15)
-    self.dst2 = expectStackLocation(dst2,0,15)
+    self.val1 = expectStackLocation(val1,0+self.is_store,15+self.is_store)
+    self.val2 = expectStackLocation(val2,0+self.is_store,15+self.is_store)
     self.src = expectStackLocation(src,1,15)
     self.offset = offset
   def __repr__(self):
-    return f"OpLoad2(is_store={self.is_store},dst1={self.dst1},dst2={self.dst2},offset={self.offset})"
+    return f"OpLoad2(is_store={self.is_store},val1={self.val1},val2={self.val2},offset={self.offset})"
   def generate(self):
-    return self.offset << 20 | ((self.src.index-1) & 0xf) << 16 | (self.dst2.index & 0xf) << 12 | (self.dst1.index & 0xf) << 8 | (0x11 if self.is_store else 0x10) | LOAD2_FLAG
+    return self.offset << 20 | ((self.src.index-1) & 0xf) << 16 | ((self.val2.index-self.is_store) & 0xf) << 12 | ((self.val1.index-self.is_store) & 0xf) << 8 | (0x11 if self.is_store else 0x10) | LOAD2_FLAG
 
 class OpLoad2Relative:
-  def __init__(self,base,is_store,dst1,dst2,offset):
+  def __init__(self,base,is_store,val1,val2,offset):
     self.base = base
     self.is_store = is_store
-    self.dst1 = expectStackLocation(dst1,0,15)
-    self.dst2 = expectStackLocation(dst2,0,15)
+    self.val1 = expectStackLocation(val1,0+self.is_store,15+self.is_store)
+    self.val2 = expectStackLocation(val2,0+self.is_store,15+self.is_store)
     self.offset = offset
   def __repr__(self):
-    return f"OpLoad2Relative(base={self.base},is_store={self.is_store},dst1={self.dst1},dst2={self.dst2},offset={self.offset})"
+    return f"OpLoad2Relative(base={self.base},is_store={self.is_store},val1={self.val1},val2={self.val2},offset={self.offset})"
   def generate(self):
-    return self.offset << 16 | (self.dst2.index & 0xf) << 12 | (self.dst1.index & 0xf) << 8 | loadBaseId(self.base,self.is_store) | LOAD2_FLAG
+    return self.offset << 16 | ((self.val2.index-self.is_store) & 0xf) << 12 | ((self.val1.index-self.is_store) & 0xf) << 8 | loadBaseId(self.base,self.is_store) | LOAD2_FLAG
+
+class OpAddr:
+  def __init__(self,base,dst,offset):
+    self.base = base
+    self.dst = expectStackLocation(dst,0,15)
+    self.offset = offset
+  def __repr__(self):
+    return f"OpAddr(base={self.base},dst={self.dst},offset={self.offset})"
+  def generate(self):
+    return self.offset << 12 | (self.dst.index & 0xf) << 8 | addrBaseId(self.base)
+
 
 class OpBinary:
   def __init__(self,base_op,dst,src1,src2,*,val_type,cmp_type):
@@ -244,11 +257,11 @@ def parseLoc(val):
   if val.startswith("@ro_data"):
     if len(val) == 8: return RelativeAddress("ro_data",0)
     if val[8] not in "+-":raise Exception("offset has to start with + or -: "+val)
-    return RelativeAddress("ro_data",int(val[3:]))
+    return RelativeAddress("ro_data",int(val[8:]))
   if val.startswith("@rw_data"):
     if len(val) == 8: return RelativeAddress("rw_data",0)
     if val[8] not in "+-":raise Exception("offset has to start with + or -: "+val)
-    return RelativeAddress("rw_data",int(val[3:]))
+    return RelativeAddress("rw_data",int(val[8:]))
   if "+" in val:
     base,offset = val.split("+")
     return RelativeAddress(StackLocation(int(base[1:])),int(offset))
@@ -349,10 +362,13 @@ def parseLine(line):
       return [OpLoad2Relative(addr.base,is_store,dst1,dst2,addr.offset)]
     else:
       raise Exception(f"load2/store2 is not implemented: {dst1} {dst2} {addr}")
-  elif op_code.startswith("addr."):
+  elif op_code == "addr":
     dst = parseLoc(args[0])
     addr = parseArg(args[1])
-    raise Exception(f"addr is not implemented {dst} {addr}")
+    if type(addr) == RelativeAddress and type(addr.base) != StackLocation:
+      return [OpAddr(addr.base,dst,addr.offset)]
+    else:
+      raise Exception(f"addr is not implemented: {dst} {addr}")
   elif (op_code.startswith("cmp.") or op_code.startswith("cmpi.") or
      op_code.startswith("add.") or op_code.startswith("addi.") or
      op_code.startswith("sub.") or op_code.startswith("subi.") or
