@@ -6,6 +6,18 @@ class StackLocation:
   def __repr__(self):
     return f"StackLocation({self.index})"
 
+class IpRelativeAddress:
+  def __init__(self,offset):
+    self.offset = offset
+  def __repr__(self):
+    return f"IpRelativeAddress({self.offset})"
+
+class LocalAddress:
+  def __init__(self,offset):
+    self.offset = offset
+  def __repr__(self):
+    return f"LocalAddress({self.offset})"
+
 class Label:
   def __init__(self,name):
     self.name = name
@@ -173,6 +185,14 @@ class OpSwap:
 def parseLoc(val):
   if val[0] != '@':
     raise Exception("location has to start with @ got: "+val)
+  if val.startswith("@ip"):
+    if len(val) > 3 and val[3] not in "+-":raise Exception("offset has to start with + or -: "+val)
+    return IpRelativeAddress(int(val[3:]))
+  if val.startswith("@bp"):
+    if len(val) > 3 and val[3] not in "+-":raise Exception("offset has to start with + or -: "+val)
+    return LocalAddress(int(val[3:]))
+  if "+" in val:
+    raise Exception("unsupported location: "+val)
   return StackLocation(int(val[1:]))
 
 def parseInt(val):
@@ -244,11 +264,18 @@ def parseLine(line):
     size = int(op_code[(len("store.") if is_store else len("load.")):])
     if size not in [1,2,4,8]:
       raise Exception(f"size has to be one of 1,2,4,8 got: {size}")
-    raise Exception(f"load/store is not implemented")
+    dst = parseLoc(args[0])
+    addr = parseArg(args[1])
+    raise Exception(f"load/store is not implemented: {size} {dst} {addr}")
   elif op_code == "load2" or op_code == "store2":
-    raise Exception(f"load2/store2 is not implemented")
+    dst1 = parseLoc(args[0])
+    dst2 = parseLoc(args[1])
+    addr = parseArg(args[2])
+    raise Exception(f"load2/store2 is not implemented: {dst1} {dst2} {addr}")
   elif op_code.startswith("addr."):
-    raise Exception(f"addr is not implemented")
+    dst = parseLoc(args[0])
+    addr = parseArg(args[1])
+    raise Exception(f"addr is not implemented {dst} {addr}")
   elif (op_code.startswith("cmp.") or op_code.startswith("cmpi.") or
      op_code.startswith("add.") or op_code.startswith("addi.") or
      op_code.startswith("sub.") or op_code.startswith("subi.") or
