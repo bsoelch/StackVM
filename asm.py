@@ -27,6 +27,10 @@ def jumpTypeId(name):
   return ["jmp.abs","call.abs","jmp","call","jnz","jz","jnz pop","jz pop"].index(name)
 def binOpId(name):
   return ["cmp","add","sub","mul","","","","","and","or","xor","shl","lshr","ashr"].index(name)
+def unaryOpId(name):
+  return ["neg","not","shl","lshr","ashr"].index(name)
+def binImmOpId(name):
+  return {"add":0x38,"mul":0x40,"and":0x48,"or":0x4c}[name]
 
 class OpLoadi:
   def __init__(self,dst,value,*,shift):
@@ -49,7 +53,7 @@ class OpBinary:
   def __repr__(self):
     return f"OpBinary({self.base_op},dst={self.dst},src1={self.src1},src2={self.src2},val_type={self.val_type},cmp_type={self.cmp_type})"
   def generate(self):
-    return (cmpTypeId(self.cmp_type) << 24 if self.cmp_type else 0) | (self.src1.index & 0xf) << 20 | (self.src1.index & 0xf) << 16 | (self.dst.index & 0xf) << 12 | binOpId(self.base_op) << 8 | (valTypeId(self.val_type) | 0x30)
+    return (cmpTypeId(self.cmp_type) << 24 if self.cmp_type else 0) | ((self.src2.index-1) & 0xf) << 20 | ((self.src1.index-1) & 0xf) << 16 | (self.dst.index & 0xf) << 12 | binOpId(self.base_op) << 8 | (valTypeId(self.val_type) | 0x50)
 
 class OpCmpImm:
   def __init__(self,dst,src1,src2,*,val_type,cmp_type,swap_args):
@@ -64,7 +68,7 @@ class OpCmpImm:
   def generate(self):
     if self.val_type[0] == "f": raise Exception("float constants are not supported")
     if type(self.src2) != int: raise Exception("unsupported constant type: "+type(self.src2))
-    return self.src2 << 20 | ((0x8 if self.swap_args else 0) | cmpTypeId(self.cmp_type) ) << 16 | (self.src1.index & 0xf) << 12 | (self.dst.index & 0xf) << 8 | (valTypeId(self.val_type) | 0x30)
+    return self.src2 << 20 | ((0x8 if self.swap_args else 0) | cmpTypeId(self.cmp_type) ) << 16 | ((self.src1.index-1) & 0xf) << 12 | (self.dst.index & 0xf) << 8 | (valTypeId(self.val_type) | 0x30)
 
 class OpBinaryImm:
   def __init__(self,base_op,dst,src1,src2,*,val_type):
@@ -75,6 +79,10 @@ class OpBinaryImm:
     self.src2 = src2
   def __repr__(self):
     return f"OpBinaryImm({self.base_op},dst={self.dst},src1={self.src1},src2={self.src2},val_type={self.val_type})"
+  def generate(self):
+    if self.val_type[0] == "f": raise Exception("float constants are not supported")
+    if type(self.src2) != int: raise Exception("unsupported constant type: "+type(self.src2))
+    return self.src2 << 16 | ((self.src1.index-1) & 0xf) << 12 | (self.dst.index & 0xf) << 8 | (valTypeId(self.val_type) | binImmOpId(self.base_op))
 
 class OpShiftImm:
   def __init__(self,base_op,dst,src1,src2,*,val_type):
@@ -85,6 +93,10 @@ class OpShiftImm:
     self.src2 = src2
   def __repr__(self):
     return f"OpShiftImm({self.base_op},dst={self.dst},src1={self.src1},src2={self.src2},val_type={self.val_type})"
+  def generate(self):
+    if self.val_type[0] == "f": raise Exception("float constants are not supported")
+    if type(self.src2) != int: raise Exception("unsupported constant type: "+type(self.src2))
+    return self.src2 << 20 | ((self.src1.index-1) & 0xf) << 16 | (self.dst.index & 0xf) << 12 | unaryOpId(base_op) << 8 | (valTypeId(self.val_type) | 0x58)
 
 class OpUnary:
   def __init__(self,base_op,dst,src,*,val_type):
@@ -94,6 +106,10 @@ class OpUnary:
     self.src = expectStackLocation(src,1,16)
   def __repr__(self):
     return f"OpUnary({self.base_op},dst={self.dst},src={self.src},val_type={self.val_type})"
+  def generate(self):
+    if self.val_type[0] == "f": raise Exception("float constants are not supported")
+    if type(self.src2) != int: raise Exception("unsupported constant type: "+type(self.src2))
+    return ((self.src.index-1) & 0xf) << 16 | (self.dst.index & 0xf) << 12 | unaryOpId(base_op) << 8 | (valTypeId(self.val_type) | 0x58)
 
 class OpCvt:
   def __init__(self,dst,src,*,src_type,signed,dst_type):
@@ -104,6 +120,10 @@ class OpCvt:
     self.src = expectStackLocation(src,1,16)
   def __repr__(self):
     return f"OpCvt(signed={self.signed},dst={self.dst},src={self.src},src_type={self.src_type},dst_type={self.dst_type})"
+  def generate(self):
+    if self.val_type[0] == "f": raise Exception("float constants are not supported")
+    if type(self.src2) != int: raise Exception("unsupported constant type: "+type(self.src2))
+    return ((self.src.index-1) & 0xf) << 16 | (self.dst.index & 0xf) << 12 | valTypeId(self.src_type) << 8 | (valTypeId(self.dst_type) | (0x68 if signed else 0x60) )
 
 class OpJmp:
   def __init__(self,jmp_type,target,*,is_long_jump=False):
@@ -123,29 +143,37 @@ class OpJmpIf:
     self.target = target
   def __repr__(self):
     return f"OpJmpIf({self.jmp_type},arg={self.arg},target={self.target})"
+  def generate(self):
+    return self.target << 12 | ((self.arg.index-1)&0xf) | ((0x8 if self.is_long_jump else 0) | jumpTypeId(self.jmp_type) | 0x20)
 
 class OpRet:
   def __init__(self):
     pass
   def __repr__(self):
     return f"OpRet()"
+  def generate(self):
+    return 0xffffff23
 
+# TODO: support variants copyFrom/To, deepSwap
 class OpCopy:
   def __init__(self,dst,src,*,drop_count):
-    self.dst = expectStackLocation(dst,0,15)
-    self.src = expectStackLocation(src,1,16)
+    self.dst = expectStackLocation(dst,0,1023)
+    self.src = expectStackLocation(src,1,1024)
     self.drop_count = drop_count
   def __repr__(self):
     return f"OpCopy(dst={self.dst},src={self.src},drop_count={self.drop_count})"
+  def generate(self):
+    return ((self.src.index-1)&0xf) << 22 | (self.dst.index&0xf) << 12 | (self.drop_count << 8) | 0x89
 
 class OpSwap:
   def __init__(self,loc1,loc2):
-    self.loc1 = expectStackLocation(loc1,1,16)
-    self.loc2 = expectStackLocation(loc2,1,16)
+    self.loc1 = expectStackLocation(loc1,1,4096)
+    self.loc2 = expectStackLocation(loc2,1,4096)
   def __repr__(self):
     return f"OpSwap(loc1={self.loc1},loc2={self.loc2})"
+  def generate(self):
+    return ((self.loc2.index-1)&0xf) << 20 | ((self.loc1.index-1)&0xf) << 8 | 0x8c
 
-# TODO: assembly/disassembly of files
 def parseLoc(val):
   if val[0] != '@':
     raise Exception("location has to start with @ got: "+val)
@@ -170,7 +198,7 @@ def parseCmpType(cmp_type):
   if cmp_type in ["eq","ne","lt","le","ult","ule"]:
     return (cmp_type,False)
   elif cmp_type in ["gt","ge","ugt","uge"]:
-    cmp_type[-2]='l'
+    cmp_type=cmp_type.replace('g','l')
     return (cmp_type,True)
   raise Exception("unsupported cmp_type: "+cmp_type)
 
@@ -334,20 +362,7 @@ def writeU32s(f,vals):
     return 4*len(vals);
 
 def generate(out="in.cctbc"):
-    ops = [
-0x00000000, # loadi dst:0 val:0
-0x00001000, # loadi dst:0 val:1
-0x000c2033, # cmpi.i64 lt dst:0 swap src:3 val:0
-0x00000427, # jz.drop dst:4
-0x00101153, # add.i64 dst:1 src1:1 src2:2
-0xffff233b, # addi.i64 dst:3 src:3 val:-1
-0x0001008c, # swap arg1:1 arg2:2
-0xfffffa22, # jmp dst:-6
-0x00401289, # copy drop: 2 dst:1 src:2
-0xffffff23, # ret
-0x00005000, # loadi dst:0 val:5
-0x00000021, # call_abs val:0
-    ]
+    ops = [op & 0xffffffff for op in parseFile()]
     start = 10
     print([hex(op)for op in ops])
     ## file-format
