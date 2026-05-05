@@ -81,7 +81,7 @@ impl AllocationTree{
 fn new_fixed_allocation_rec(node: &mut AllocationNode,allocation: &Allocation,key_shift: u32) {
   let key = (allocation.start >> key_shift) & 0xff;
   match &mut node.nodes[key as usize] {
-    TreeElement::Empty => { // TODO: does this copy the value twice?
+    TreeElement::Empty => {
       node.nodes[key as usize] = TreeElement::Leaf(Box::new(allocation.clone()));
     },
     TreeElement::Leaf(prev_alloc) => {
@@ -453,22 +453,31 @@ fn run(program: &mut Program) {
             stack_set(val,&mut val_stack,dst as usize);
           }
         }
-        0x0c => { // local-addr [dst:4][offset:*u]
+        0x0c => { // local-addr [dst:4][offset:20u]
           let dst = (op_data & 0xf) as usize;
           let offset = (op_data >> 4) as u64;
           stack_set(rbp + offset,&mut val_stack,dst);
           if TRACE {println!("addr.local @{} ${}",dst,op_data);}
         }
-        0x0d => { // ip-relative-addr [dst:4][offset:*s]
+        0x0d => { // ip-relative-addr [dst:4][offset:20s]
           let op_data = (op as i32) >> (base_shift+4);
           let dst = (op_data & 0xf) as usize;
           let offset = (op_data >> 4) as i64;
           stack_set((ip as i64 + offset) as u64,&mut val_stack,dst);
           if TRACE {println!("addr.ip @{} ${}",dst,op_data);}
         }
-        // TODO? address relative to ro/rw-data
-        // 0x0e -> rodata-relative address
-        // 0x0f -> rwdata-relative address
+        0x0e => { // ro-addr [dst:4][offset:20u]
+          let dst = (op_data & 0xf) as usize;
+          let offset = (op_data >> 4) as u64;
+          stack_set(program.ro_addr + offset,&mut val_stack,dst);
+          if TRACE {println!("addr.ro @{} ${}",dst,op_data);}
+        }
+        0x0e => { // rw-addr [dst:4][offset:20u]
+          let dst = (op_data & 0xf) as usize;
+          let offset = (op_data >> 4) as u64;
+          stack_set(program.rw_addr + offset,&mut val_stack,dst);
+          if TRACE {println!("addr.rw @{} ${}",dst,op_data);}
+        }
         0x10|0x11 => { // load/store [dst:4][src:4][size:2][offset:14u]
           let is_store = op_type == 0x11;
           let dst = (op_data & 0xf) as usize;
