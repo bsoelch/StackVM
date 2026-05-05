@@ -107,9 +107,7 @@ class OpUnary:
   def __repr__(self):
     return f"OpUnary({self.base_op},dst={self.dst},src={self.src},val_type={self.val_type})"
   def generate(self):
-    if self.val_type[0] == "f": raise Exception("float constants are not supported")
-    if type(self.src2) != int: raise Exception("unsupported constant type: "+type(self.src2))
-    return ((self.src.index-1) & 0xf) << 16 | (self.dst.index & 0xf) << 12 | unaryOpId(base_op) << 8 | (valTypeId(self.val_type) | 0x58)
+    return ((self.src.index-1) & 0xf) << 16 | (self.dst.index & 0xf) << 12 | unaryOpId(self.base_op) << 8 | (valTypeId(self.val_type) | 0x58)
 
 class OpCvt:
   def __init__(self,dst,src,*,src_type,signed,dst_type):
@@ -121,9 +119,7 @@ class OpCvt:
   def __repr__(self):
     return f"OpCvt(signed={self.signed},dst={self.dst},src={self.src},src_type={self.src_type},dst_type={self.dst_type})"
   def generate(self):
-    if self.val_type[0] == "f": raise Exception("float constants are not supported")
-    if type(self.src2) != int: raise Exception("unsupported constant type: "+type(self.src2))
-    return ((self.src.index-1) & 0xf) << 16 | (self.dst.index & 0xf) << 12 | valTypeId(self.src_type) << 8 | (valTypeId(self.dst_type) | (0x68 if signed else 0x60) )
+    return valTypeId(self.src_type) << 16 | ((self.src.index-1) & 0xf) << 12 | (self.dst.index & 0xf) << 8 | (valTypeId(self.dst_type) | (0x68 if self.signed else 0x60) )
 
 class OpJmp:
   def __init__(self,jmp_type,target,*,is_long_jump=False):
