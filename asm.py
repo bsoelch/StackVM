@@ -6,24 +6,12 @@ class StackLocation:
   def __repr__(self):
     return f"StackLocation({self.index})"
 
-class OffsetStackLocation:
+class RelativeAddress:
   def __init__(self,base,offset):
     self.base = base
     self.offset = offset
   def __repr__(self):
-    return f"OffsetStackLocation({self.base},{self.offset})"
-
-class IpRelativeAddress:
-  def __init__(self,offset):
-    self.offset = offset
-  def __repr__(self):
-    return f"IpRelativeAddress({self.offset})"
-
-class LocalAddress:
-  def __init__(self,offset):
-    self.offset = offset
-  def __repr__(self):
-    return f"LocalAddress({self.offset})"
+    return f"RelativeAddress({self.base},{self.offset})"
 
 class Label:
   def __init__(self,name):
@@ -53,7 +41,7 @@ def binImmOpId(name):
 def encodeSize(size):
   return [1,2,4,8].index(size)
 def loadBaseId(name,is_store):
-  return {("bp",False):0x12,("bp",True):0x13,("ip",False):0x14,("ro",False):0x15,("rw",False):0x16,("rw",True):0x17}[(name,is_store)]
+  return {("bp",False):0x12,("bp",True):0x13,("ip",False):0x14,("ro_data",False):0x15,("rw_data",False):0x16,("rw_data",True):0x17}[(name,is_store)]
 LOAD2_FLAG = 0x8
 
 class OpLoadi:
@@ -246,16 +234,24 @@ def parseLoc(val):
   if val[0] != '@':
     raise Exception("location has to start with @ got: "+val)
   if val.startswith("@ip"):
-    if len(val) == 3: return IpRelativeAddress(0)
+    if len(val) == 3: return RelativeAddress("ip",0)
     if val[3] not in "+-":raise Exception("offset has to start with + or -: "+val)
-    return IpRelativeAddress(int(val[3:]))
+    return RelativeAddress("ip",int(val[3:]))
   if val.startswith("@bp"):
-    if len(val) == 3: return LocalAddress(0)
+    if len(val) == 3: return RelativeAddress("bp",0)
     if val[3] not in "+-":raise Exception("offset has to start with + or -: "+val)
-    return LocalAddress(int(val[3:]))
+    return RelativeAddress("bp",int(val[3:]))
+  if val.startswith("@ro_data"):
+    if len(val) == 8: return RelativeAddress("ro_data",0)
+    if val[8] not in "+-":raise Exception("offset has to start with + or -: "+val)
+    return RelativeAddress("ro_data",int(val[3:]))
+  if val.startswith("@rw_data"):
+    if len(val) == 8: return RelativeAddress("rw_data",0)
+    if val[8] not in "+-":raise Exception("offset has to start with + or -: "+val)
+    return RelativeAddress("rw_data",int(val[3:]))
   if "+" in val:
     base,offset = val.split("+")
-    return OffsetStackLocation(int(base[1:]),int(offset))
+    return RelativeAddress(StackLocation(int(base[1:])),int(offset))
   return StackLocation(int(val[1:]))
 
 def parseInt(val):
@@ -330,15 +326,13 @@ def parseLine(line):
     dst = parseLoc(args[0])
     addr = parseArg(args[1])
     ## TODO: check offset range
-    if type(addr) == IpRelativeAddress:
-      if is_store: raise Exception("cannot store to ip-relative address")
-      return [OpLoadRelative("ip",False,size,dst,addr.offset)]
-    elif type(addr) == LocalAddress:
-      return [OpLoadRelative("bp",is_store,size,dst,addr.offset)]
-    elif type(addr) == OffsetStackLocation:
-      return [OpLoad(is_store,size,dst,StackLocation(addr.base),addr.offset)]
-    elif type(addr) == StackLocation:
+    if type(addr) == StackLocation:
       return [OpLoad(is_store,size,dst,addr,0)]
+    elif type(addr) == RelativeAddress and type(addr.base) == StackLocation:
+      return [OpLoad(is_store,size,dst,addr.base,addr.offset)]
+    elif type(addr) == RelativeAddress:
+      if is_store and addr.base in ["ip","ro_data"]: raise Exception(f"cannot store to {addr.base}-relative address")
+      return [OpLoadRelative(addr.base,is_store,size,dst,addr.offset)]
     else:
       raise Exception(f"load/store is not implemented: {size} {dst} {addr}")
   elif op_code == "load2" or op_code == "store2":
@@ -346,15 +340,13 @@ def parseLine(line):
     dst1 = parseLoc(args[0])
     dst2 = parseLoc(args[1])
     addr = parseArg(args[2])
-    if type(addr) == IpRelativeAddress:
-      if is_store: raise Exception("cannot store to ip-relative address")
-      return [OpLoad2Relative("ip",False,dst1,dst2,addr.offset)]
-    elif type(addr) == LocalAddress:
-      return [OpLoad2Relative("bp",is_store,dst1,dst2,addr.offset)]
-    elif type(addr) == OffsetStackLocation:
-      return [OpLoad2(is_store,dst1,dst2,StackLocation(addr.base),addr.offset)]
-    elif type(addr) == StackLocation:
+    if type(addr) == StackLocation:
       return [OpLoad2(is_store,dst1,dst2,addr,0)]
+    elif type(addr) == RelativeAddress and type(addr.base) == StackLocation:
+      return [OpLoad2(is_store,dst1,dst2,addr.base,addr.offset)]
+    elif type(addr) == RelativeAddress:
+      if is_store and addr.base in ["ip","ro_data"]: raise Exception(f"cannot store to {addr.base}-relative address")
+      return [OpLoad2Relative(addr.base,is_store,dst1,dst2,addr.offset)]
     else:
       raise Exception(f"load2/store2 is not implemented: {dst1} {dst2} {addr}")
   elif op_code.startswith("addr."):
@@ -485,6 +477,8 @@ def generate(out="in.cctbc"):
     ops = [op & 0xffffffff for op in parseFile()]
     start = 10
     print([hex(op)for op in ops])
+    ro_data = [ord(c)for c in "Hello World!"]
+    rw_data = [0]*64
     ## file-format
     ## [version][ip][code-addr][code-size][ro-addr][ro-data-size][rw-addr][rw-data-size][sp][stack-size]
     stack_pointer = 0x1_0000_0000
@@ -494,14 +488,20 @@ def generate(out="in.cctbc"):
         writeU64(f,start)
         writeU64(f,0) ## code-addr
         writeU64(f,(len(ops)+1)//2)
-        writeU64(f,0) ## ro-data-addr
-        writeU64(f,0) ## ro-data-size
-        writeU64(f,0) ## rw-data-addr
-        writeU64(f,0) ## rw-data-addr
+        writeU64(f,0x1_0000_0000_0000) ## ro-data-addr
+        writeU64(f,(len(ro_data)+7)//8) ## ro-data-size
+        writeU64(f,0x2_0000_0000_0000) ## rw-data-addr
+        writeU64(f,(len(rw_data)+7)//8) ## rw-data-addr
         writeU64(f,stack_pointer) ## sp
         writeU64(f,stack_size) ## stack-size
         writeU32s(f,ops) ## code
         if len(ops) & 1: ## padding
           writeU32(f,0)
+        f.write(bytes(ro_data))
+        if len(ro_data) % 8 != 0: ## padding
+          f.write(bytes(0 for _ in range(8-(len(ro_data)%8))))
+        f.write(bytes(rw_data))
+        if len(rw_data) % 8 != 0: ## padding
+          f.write(bytes(0 for _ in range(8-(len(rw_data)%8))))
 
 generate()
