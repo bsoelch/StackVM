@@ -1217,17 +1217,18 @@ fn load_file(file: &mut File) -> Option<Program> {
   let _code_addr = header_buf[2]; // memory-address of code, currently unused
   let code_size = (2*header_buf[3]) as usize; // convert u64 -> u32
   let ro_addr = header_buf[4]; // memory-address of ro-data, currently unused
-  let ro_data_size = header_buf[5] as usize;
+  let ro_data_size = header_buf[5] as usize; // in u64
   let rw_addr = header_buf[6]; // memory-address of rw-data, currently unused
-  let rw_data_size = header_buf[7] as usize;
+  let rw_data_size = header_buf[7]*8; // convert u64 -> byte
   let sp = header_buf[8];
   let stack_size = header_buf[9] as usize;
   let mut code_buffer = unsafe{ Box::<[u32]>::new_uninit_slice(code_size).assume_init() };
   file.read_exact(u32_as_bytes_mut(&mut code_buffer)).ok()?;
   let mut ro_buffer = unsafe{ Box::<[u64]>::new_uninit_slice(ro_data_size).assume_init() };
   file.read_exact(u64_as_bytes_mut(&mut ro_buffer)).ok()?;
-  let mut rw_buffer = unsafe{ Box::<[u64]>::new_uninit_slice(rw_data_size).assume_init() };
-  file.read_exact(u64_as_bytes_mut(&mut rw_buffer)).ok()?;
+  let mut rw_buffer = Vec::new();
+  file.take(rw_data_size).read_to_end(&mut rw_buffer).ok()?;
+  rw_buffer.resize(rw_data_size as usize,0);
   let mut allocations = AllocationTree::new();
   new_fixed_allocation(&mut allocations,&Allocation{
     start: ro_addr, data: u64_as_bytes_box(ro_buffer),
@@ -1235,7 +1236,7 @@ fn load_file(file: &mut File) -> Option<Program> {
     allocation_type: AllocationType::STATIC,
   });
   new_fixed_allocation(&mut allocations,&Allocation{
-    start: rw_addr, data: u64_as_bytes_box(rw_buffer),
+    start: rw_addr, data: rw_buffer.into_boxed_slice(),
     readable: true, writeable: true, executable:false,
     allocation_type: AllocationType::STATIC,
   });
