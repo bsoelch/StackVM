@@ -47,8 +47,15 @@ def loadBaseId(name,is_store):
 LOAD2_FLAG = 0x8
 def addrBaseId(name):
   return {"bp":0x0c,"ip":0x0d,"ro_data":0x0e,"rw_data":0x0f}[name]
+def valTypeBits(val_type):
+  return {"i8":1,"i16":2,"f16":2,"i32":4,"f32":4,"i64":8,"f64":8}[val_type]
 
-class OpLoadi:
+class CodeOp:
+  def codeSize(self,labels,ip):
+    return 1
+
+LOADI_BITS = 20
+class OpLoadi(CodeOp):
   def __init__(self,dst,value,*,shift):
     self.value = value
     self.dst = expectStackLocation(dst,0,15)
@@ -58,7 +65,7 @@ class OpLoadi:
   def generate(self,prog):
     prog.appendU32(self.value << 12 | (self.dst.index & 0xf) << 8 | (self.shift & 0xf))
 
-class OpLoad:
+class OpLoad(CodeOp):
   def __init__(self,is_store,size,val,src,offset):
     self.is_store = is_store
     self.size = size
@@ -70,7 +77,8 @@ class OpLoad:
   def generate(self,prog):
     prog.appendU32(self.offset << 18 | (encodeSize(self.size) << 16) | ((self.src.index-1) & 0xf) << 12 | ((self.val.index-self.is_store) & 0xf) << 8 | (0x11 if self.is_store else 0x10))
 
-class OpLoadRelative:
+LOAD_REL_OFFSET_BITS = 18
+class OpLoadRelative(CodeOp):
   def __init__(self,base,is_store,size,val,offset):
     self.base = base
     self.is_store = is_store
@@ -82,7 +90,7 @@ class OpLoadRelative:
   def generate(self,prog):
     prog.appendU32(self.offset << 14 | (encodeSize(self.size) << 12) | ((self.val.index-self.is_store) & 0xf) << 8 | loadBaseId(self.base,self.is_store))
 
-class OpLoadLabel:
+class OpLoadLabel(CodeOp):
   def __init__(self,base,is_store,size,val,offset):
     self.is_store = is_store
     self.size = size
@@ -91,8 +99,28 @@ class OpLoadLabel:
     self.offset = offset
   def __repr__(self):
     return f"OpLoadLabel(base={self.base},is_store={self.is_store},size={self.size},val={self.val},offset={self.offset})"
+  def codeSize(self,labels,ip):
+    if self.base in labels:
+      label_base, label_offset = labels[self.base]
+      if label_base == "code":
+        offset = (self.offset + label_offset) - ip
+        if offset.bit_length() < LOAD_REL_OFFSET_BITS:
+          return 1 ## fits in offset
+        elif offset.bit_length() < LOAD_REL_OFFSET_BITS + LOADI_BITS:
+          return 2 ## loadi load
+        return 3
+      else:
+        offset = self.offset + label_offset
+        if offset < 0:
+          return 3 ## addr subi load
+        elif offset.bit_length() <= LOAD_REL_OFFSET_BITS:
+          return 1 ## fits in offset
+        elif offset.bit_length() <= LOAD_REL_OFFSET_BITS + LOADI_BITS:
+          return 2 ## loadi load
+        return 3
+    return
 
-class OpLoad2:
+class OpLoad2(CodeOp):
   def __init__(self,is_store,val1,val2,src,offset):
     self.is_store = is_store
     self.val1 = expectStackLocation(val1,0+self.is_store,15+self.is_store)
@@ -104,7 +132,8 @@ class OpLoad2:
   def generate(self,prog):
     prog.appendU32(self.offset << 20 | ((self.src.index-1) & 0xf) << 16 | ((self.val2.index-self.is_store) & 0xf) << 12 | ((self.val1.index-self.is_store) & 0xf) << 8 | (0x11 if self.is_store else 0x10) | LOAD2_FLAG)
 
-class OpLoad2Relative:
+LOAD2_REL_OFFSET_BITS = 16
+class OpLoad2Relative(CodeOp):
   def __init__(self,base,is_store,val1,val2,offset):
     self.base = base
     self.is_store = is_store
@@ -116,7 +145,7 @@ class OpLoad2Relative:
   def generate(self,prog):
     prog.appendU32(self.offset << 16 | ((self.val2.index-self.is_store) & 0xf) << 12 | ((self.val1.index-self.is_store) & 0xf) << 8 | loadBaseId(self.base,self.is_store) | LOAD2_FLAG)
 
-class OpLoad2Label:
+class OpLoad2Label(CodeOp):
   def __init__(self,base,is_store,val1,val2,offset):
     self.is_store = is_store
     self.val1 = expectStackLocation(val1,0+self.is_store,15+self.is_store)
@@ -125,8 +154,29 @@ class OpLoad2Label:
     self.offset = offset
   def __repr__(self):
     return f"OpLoad2Label(base={self.base},is_store={self.is_store},val1={self.val1},val2={self.val2},offset={self.offset})"
+  def codeSize(self,labels,ip):
+    if self.base.name in labels:
+      label_base, label_offset = labels[self.base.name]
+      ## TODO: handle label-expressions
+      if label_base == "code":
+        offset = (self.offset + label_offset) - ip
+        if offset.bit_length() < LOAD2_REL_OFFSET_BITS:
+          return 1 ## fits in offset
+        elif offset.bit_length() < LOAD2_REL_OFFSET_BITS + LOADI_BITS:
+          return 2 ## loadi load
+        return 3
+      else:
+        offset = self.offset + label_offset
+        if offset < 0:
+          return 3 ## addr subi load
+        elif offset.bit_length() <= LOAD2_REL_OFFSET_BITS:
+          return 1 ## fits in offset
+        elif offset.bit_length() <= LOAD2_REL_OFFSET_BITS + LOADI_BITS:
+          return 2 ## loadi load
+        return 3
+    return 1
 
-class OpAddr:
+class OpAddr(CodeOp):
   def __init__(self,base,dst,offset):
     self.base = base
     self.dst = expectStackLocation(dst,0,15)
@@ -136,7 +186,7 @@ class OpAddr:
   def generate(self,prog):
     prog.appendU32(self.offset << 12 | (self.dst.index & 0xf) << 8 | addrBaseId(self.base))
 
-class OpBinary:
+class OpBinary(CodeOp):
   def __init__(self,base_op,dst,src1,src2,*,val_type,cmp_type):
     self.base_op = base_op
     self.val_type = val_type
@@ -149,7 +199,7 @@ class OpBinary:
   def generate(self,prog):
     prog.appendU32((cmpTypeId(self.cmp_type) << 24 if self.cmp_type else 0) | ((self.src2.index-1) & 0xf) << 20 | ((self.src1.index-1) & 0xf) << 16 | (self.dst.index & 0xf) << 12 | binOpId(self.base_op) << 8 | (valTypeId(self.val_type) | 0x50))
 
-class OpCmpImm:
+class OpCmpImm(CodeOp):
   def __init__(self,dst,src1,src2,*,val_type,cmp_type,swap_args):
     self.val_type = val_type
     self.cmp_type = cmp_type
@@ -164,7 +214,7 @@ class OpCmpImm:
     if type(self.src2) != int: raise Exception("unsupported constant type: "+type(self.src2))
     prog.appendU32(self.src2 << 20 | ((0x8 if self.swap_args else 0) | cmpTypeId(self.cmp_type) ) << 16 | ((self.src1.index-1) & 0xf) << 12 | (self.dst.index & 0xf) << 8 | (valTypeId(self.val_type) | 0x30))
 
-class OpBinaryImm:
+class OpBinaryImm(CodeOp):
   def __init__(self,base_op,dst,src1,src2,*,val_type):
     self.base_op = base_op
     self.val_type = val_type
@@ -178,7 +228,7 @@ class OpBinaryImm:
     if type(self.src2) != int: raise Exception("unsupported constant type: "+type(self.src2))
     prog.appendU32(self.src2 << 16 | ((self.src1.index-1) & 0xf) << 12 | (self.dst.index & 0xf) << 8 | (valTypeId(self.val_type) | binImmOpId(self.base_op)))
 
-class OpShiftImm:
+class OpShiftImm(CodeOp):
   def __init__(self,base_op,dst,src1,src2,*,val_type):
     self.base_op = base_op
     self.val_type = val_type
@@ -192,7 +242,7 @@ class OpShiftImm:
     if type(self.src2) != int: raise Exception("unsupported constant type: "+type(self.src2))
     prog.appendU32(self.src2 << 20 | ((self.src1.index-1) & 0xf) << 16 | (self.dst.index & 0xf) << 12 | unaryOpId(base_op) << 8 | (valTypeId(self.val_type) | 0x58))
 
-class OpUnary:
+class OpUnary(CodeOp):
   def __init__(self,base_op,dst,src,*,val_type):
     self.base_op = base_op
     self.val_type = val_type
@@ -203,7 +253,7 @@ class OpUnary:
   def generate(self,prog):
     prog.appendU32(((self.src.index-1) & 0xf) << 16 | (self.dst.index & 0xf) << 12 | unaryOpId(self.base_op) << 8 | (valTypeId(self.val_type) | 0x58))
 
-class OpCvt:
+class OpCvt(CodeOp):
   def __init__(self,dst,src,*,src_type,signed,dst_type):
     self.src_type = src_type
     self.dst_type = dst_type
@@ -215,7 +265,7 @@ class OpCvt:
   def generate(self,prog):
     prog.appendU32(valTypeId(self.src_type) << 16 | ((self.src.index-1) & 0xf) << 12 | (self.dst.index & 0xf) << 8 | (valTypeId(self.dst_type) | (0x68 if self.signed else 0x60)))
 
-class OpJmp:
+class OpJmp(CodeOp):
   def __init__(self,jmp_type,target,*,is_long_jump=False):
     self.jmp_type = jmp_type
     self.is_long_jump = is_long_jump
@@ -225,7 +275,7 @@ class OpJmp:
   def generate(self,prog):
     prog.appendU32(self.target << 8 | ((0x8 if self.is_long_jump else 0) | jumpTypeId(self.jmp_type) | 0x20))
 
-class OpJmpIf:
+class OpJmpIf(CodeOp):
   def __init__(self,jmp_type,arg,target,*,is_long_jump=False):
     self.jmp_type = jmp_type
     self.is_long_jump = is_long_jump
@@ -236,7 +286,7 @@ class OpJmpIf:
   def generate(self,prog):
     prog.appendU32(self.target << 12 | ((self.arg.index-1)&0xf) | ((0x8 if self.is_long_jump else 0) | jumpTypeId(self.jmp_type) | 0x20))
 
-class OpRet:
+class OpRet(CodeOp):
   def __init__(self):
     pass
   def __repr__(self):
@@ -245,7 +295,7 @@ class OpRet:
     prog.appendU32(0xffffff23)
 
 # TODO: support variants copyFrom/To, deepSwap
-class OpCopy:
+class OpCopy(CodeOp):
   def __init__(self,dst,src,*,drop_count):
     self.dst = expectStackLocation(dst,0,1023)
     self.src = expectStackLocation(src,1,1024)
@@ -255,7 +305,7 @@ class OpCopy:
   def generate(self,prog):
     prog.appendU32(((self.src.index-1)&0xf) << 22 | (self.dst.index&0xf) << 12 | (self.drop_count << 8) | 0x89)
 
-class OpSwap:
+class OpSwap(CodeOp):
   def __init__(self,loc1,loc2):
     self.loc1 = expectStackLocation(loc1,1,4096)
     self.loc2 = expectStackLocation(loc2,1,4096)
@@ -264,7 +314,7 @@ class OpSwap:
   def generate(self,prog):
     prog.appendU32(((self.loc2.index-1)&0xf) << 20 | ((self.loc1.index-1)&0xf) << 8 | 0x8c)
 
-class OpAlloc:
+class OpAlloc(CodeOp):
   def __init__(self,count):
     self.count = count
   def __repr__(self):
@@ -279,6 +329,10 @@ class OpLabel:
     return f"OpLabel(name={self.name})"
   def generate(self,prog):
     pass
+  def codeSize(self,labels,ip):
+    return 0
+  def byteSize(self,labels):
+    return 0
 
 class OpData:
   def __init__(self,val_type,data,*,has_label):
@@ -301,6 +355,10 @@ class OpData:
       prog.appendU16s(self.data)
       return
     raise Exception(f"encoding {self.val_type} data is not yet supported")
+  def codeSize(self,labels,ip):
+    return (self.byteSize(labels)+3)//4
+  def byteSize(self,labels):
+    return len(self.data)*valTypeBits(self.val_type)
 
 class OpAlign:
   def __init__(self,byte_alignment):
@@ -496,9 +554,9 @@ class SourceFile:
     if self.section == "code":
       self.code.append(value)
     elif self.section == "ro_data":
-      self.code.append(value)
+      self.ro_data.append(value)
     elif self.section == "rw_data":
-      self.code.append(value)
+      self.rw_data.append(value)
     else:
       raise Exception("unsupported section: "+self.section)
     
@@ -709,16 +767,67 @@ def parseFile(srcFile="src.txt"):
   with open(srcFile,mode="r") as f:
     src = parse(f.read())
   print(*src.code,sep='\n')
-  print()
+  print("-----------------")
   print(*src.ro_data,sep='\n')
-  print()
+  print("-----------------")
   print(*src.rw_data,sep='\n')
   if src.has_label:
-    ## 0. set all label offsets to 0
-    ## 1. go through program and compute addresses of operations (relative to section base)
-    ## 2. assign values to labels
-    ## 3. if operation changed size go back to 1
-    ## 4. replace labels with their integer values
+    labels = {}
+    ## compute addresses of data
+    offset = 0
+    for op in src.ro_data:
+      op.offset = offset
+      if type(op) == OpLabel:
+        if op.name in labels:
+          raise Exception("Duplicate label: "+op.name)
+        labels[op.name] = ("ro_data",offset)
+      elif type(op) == OpAlign:
+        if op.byte_alignment > 1:
+          offset = (offset + (op.byte_alignment-1)) & (-op.byte_alignment)
+        continue
+      op.size = op.byteSize(labels)
+      offset += op.size
+    offset = 0
+    for op in src.rw_data:
+      op.offset = offset
+      if type(op) == OpLabel:
+        if op.name in labels:
+          raise Exception("Duplicate label: "+op.name)
+        labels[op.name] = ("rw_data",offset)
+      elif type(op) == OpAlign:
+        if op.byte_alignment > 1:
+          offset = (offset + (op.byte_alignment-1)) & (-op.byte_alignment)
+        continue
+      op.size = op.byteSize(labels)
+      offset += op.size
+    ## compute addresses of operations, retry if labels change size
+    first = True
+    change = False
+    while first or change:
+      offset = 0
+      change = first
+      for op in src.code:
+        op.offset = offset
+        if type(op) == OpLabel:
+          if first and op.name in labels:
+            raise Exception("Duplicate label: "+op.name)
+          labels[op.name] = ("code",offset)
+        elif type(op) == OpAlign:
+          word_alignemnt = op.byte_alignment // 4
+          if word_alignemnt > 1:
+            offset = (offset + (word_alignemnt-1)) & (-word_alignemnt)
+          continue
+        ## ip is incremented before offset calculations
+        op_size = op.codeSize(labels,offset+1)
+        if not first and op.size != op_size:
+          change = True
+        op.size = op_size
+        offset += op_size
+      first = False
+    print(labels)
+    for op in src.code:
+      print(op.offset,op.size,op)
+    ## TODO replace labels with their integer values
     raise Exception("label-resolving is not yet implemented")
   prog = Program()
   for op in src.code:
