@@ -1,0 +1,13 @@
+loadi @0 $0
+loadi @0 $1
+cmp.i64 lt @0 $0 @3
+jz pop $4
+add.i64 @1 @1 @2
+sub.i64 @3 @3 $1
+swap @1 @2
+jmp $-6
+copy.drop2 @1 @2 # <n> res x -> res
+ret
+!start
+loadi @0 $5
+call.abs $0
