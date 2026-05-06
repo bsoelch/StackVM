@@ -21,7 +21,7 @@ class Label:
 
 def expectStackLocation(val,minIndex,maxIndex):
   if type(val) != StackLocation:
-    raise Exception("expected stack location got: "+str(type(val)))
+    raise Exception(f"expected stack location got: {str(type(val))} {repr(val)}")
   if val.index < minIndex or val.index > maxIndex:
     raise Exception(f"stack index {val.index} outside allowed range {minIndex} to {maxIndex}")
   return val
@@ -251,6 +251,15 @@ class OpAlloc:
   def generate(self):
     return self.count << 8 | 0x90
 
+class OpData:
+  def __init__(self,val_type,data):
+    self.val_type = val_type
+    self.data = data
+  def __repr__(self):
+    return f"OpData(val_type={self.val_type},data={self.data})"
+  def generate(self):
+    return 0 ## TODO: generate data
+
 def parseLoc(val):
   if val[0] != '@':
     raise Exception("location has to start with @ got: "+val)
@@ -291,6 +300,14 @@ def parseArg(val):
     return Label(val[1:])
   return parseInt(val)
 
+def parseData(val,val_type):
+  if val[0] == '"':
+    if val_type != "i8": raise Exception("string-data is only supported for type i8")
+    return [*bytes(val[1:],encoding="utf8")]
+  if val[0] == ':':
+    return [Label(val[1:])]
+  return [parseInt(val)]
+
 def parseCmpType(cmp_type):
   cmp_type = cmp_type.lower()
   if cmp_type in ["eq","ne","lt","le","ult","ule"]:
@@ -310,16 +327,47 @@ LOADI_MIN_VAL = -0x80000
 LOADI_MAX_VAL = 0x7ffff
 LOADI_MASK = 0xfffff
 
+def splitLine(line):
+  i = 0
+  while i < len(line) and not line[i].isspace(): i+=1
+  op_code = line[:i]
+  line = line[i:]
+  args = []
+  while len(line) > 0:
+    i = 0
+    while i < len(line) and line[i].isspace(): i+=1
+    line = line[i:]
+    if len(line) == 0:break
+    if line[0] == '"':
+      i = 1
+      while i < len(line) and line[i] != '"': i+=1
+      args.append(line[:i])
+      line = line[i+1:]
+      continue
+    i = 0
+    if line[0] in "+-":
+      if len(args) == 0: raise Exception(f"{line[0]} cannot be the first argument")
+      args[-1]+=line[0]
+      i = 1
+      while i < len(line) and line[i].isspace(): i+=1
+      line = line[i:]
+      while i < len(line) and not line[i].isspace(): i+=1
+      args[-1]+=line[:i]
+      line = line[i+1:]
+      continue
+    while i < len(line) and not line[i].isspace(): i+=1
+    args.append(line[:i])
+    line = line[i+1:]
+  return op_code, args
+
 def parseLine(line):
   line = line.strip()
   hash_pos = line.find('#')
   if hash_pos != -1:
     line = line[:hash_pos]
-  parts = line.split()
-  if len(parts) < 1:
+  op_code, args = splitLine(line)
+  if len(op_code) == 0:
     return []
-  op_code = parts[0].lower()
-  args = parts[1:]
   if op_code == "loadi":
     dst = parseLoc(args[0])
     arg = parseInt(args[1])
@@ -479,6 +527,10 @@ def parseLine(line):
     if op_code[0] == "d":
       count = -count
     return [OpAlloc(count)]
+  elif op_code.startswith("data."):
+    val_type = op_code[len("data."):]
+    args = [elt for arg in args for elt in parseData(arg,val_type)]
+    return [OpData(val_type, args)]
   raise Exception("unknown op_code: "+op_code)
 
 def parse(code):
