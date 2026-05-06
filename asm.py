@@ -53,8 +53,8 @@ class OpLoadi:
     self.shift = shift
   def __repr__(self):
     return f"OpLoadi(dst={self.dst},value={self.value},shift={self.shift})"
-  def generate(self):
-    return self.value << 12 | (self.dst.index & 0xf) << 8 | (self.shift & 0xf)
+  def generate(self,ops):
+    ops.append(self.value << 12 | (self.dst.index & 0xf) << 8 | (self.shift & 0xf))
 
 class OpLoad:
   def __init__(self,is_store,size,val,src,offset):
@@ -65,8 +65,8 @@ class OpLoad:
     self.offset = offset
   def __repr__(self):
     return f"OpLoad(is_store={self.is_store},size={self.size},val={self.val},offset={self.offset})"
-  def generate(self):
-    return self.offset << 18 | (encodeSize(self.size) << 16) | ((self.src.index-1) & 0xf) << 12 | ((self.val.index-self.is_store) & 0xf) << 8 | (0x11 if self.is_store else 0x10)
+  def generate(self,ops):
+    ops.append(self.offset << 18 | (encodeSize(self.size) << 16) | ((self.src.index-1) & 0xf) << 12 | ((self.val.index-self.is_store) & 0xf) << 8 | (0x11 if self.is_store else 0x10))
 
 class OpLoadRelative:
   def __init__(self,base,is_store,size,val,offset):
@@ -77,8 +77,8 @@ class OpLoadRelative:
     self.offset = offset
   def __repr__(self):
     return f"OpLoadRelative(base={self.base},is_store={self.is_store},size={self.size},val={self.val},offset={self.offset})"
-  def generate(self):
-    return self.offset << 14 | (encodeSize(self.size) << 12) | ((self.val.index-self.is_store) & 0xf) << 8 | loadBaseId(self.base,self.is_store)
+  def generate(self,ops):
+    ops.append(self.offset << 14 | (encodeSize(self.size) << 12) | ((self.val.index-self.is_store) & 0xf) << 8 | loadBaseId(self.base,self.is_store))
 
 class OpLoad2:
   def __init__(self,is_store,val1,val2,src,offset):
@@ -89,8 +89,8 @@ class OpLoad2:
     self.offset = offset
   def __repr__(self):
     return f"OpLoad2(is_store={self.is_store},val1={self.val1},val2={self.val2},offset={self.offset})"
-  def generate(self):
-    return self.offset << 20 | ((self.src.index-1) & 0xf) << 16 | ((self.val2.index-self.is_store) & 0xf) << 12 | ((self.val1.index-self.is_store) & 0xf) << 8 | (0x11 if self.is_store else 0x10) | LOAD2_FLAG
+  def generate(self,ops):
+    ops.append(self.offset << 20 | ((self.src.index-1) & 0xf) << 16 | ((self.val2.index-self.is_store) & 0xf) << 12 | ((self.val1.index-self.is_store) & 0xf) << 8 | (0x11 if self.is_store else 0x10) | LOAD2_FLAG)
 
 class OpLoad2Relative:
   def __init__(self,base,is_store,val1,val2,offset):
@@ -101,8 +101,8 @@ class OpLoad2Relative:
     self.offset = offset
   def __repr__(self):
     return f"OpLoad2Relative(base={self.base},is_store={self.is_store},val1={self.val1},val2={self.val2},offset={self.offset})"
-  def generate(self):
-    return self.offset << 16 | ((self.val2.index-self.is_store) & 0xf) << 12 | ((self.val1.index-self.is_store) & 0xf) << 8 | loadBaseId(self.base,self.is_store) | LOAD2_FLAG
+  def generate(self,ops):
+    ops.append(self.offset << 16 | ((self.val2.index-self.is_store) & 0xf) << 12 | ((self.val1.index-self.is_store) & 0xf) << 8 | loadBaseId(self.base,self.is_store) | LOAD2_FLAG)
 
 class OpAddr:
   def __init__(self,base,dst,offset):
@@ -111,8 +111,8 @@ class OpAddr:
     self.offset = offset
   def __repr__(self):
     return f"OpAddr(base={self.base},dst={self.dst},offset={self.offset})"
-  def generate(self):
-    return self.offset << 12 | (self.dst.index & 0xf) << 8 | addrBaseId(self.base)
+  def generate(self,ops):
+    ops.append(self.offset << 12 | (self.dst.index & 0xf) << 8 | addrBaseId(self.base))
 
 
 class OpBinary:
@@ -125,8 +125,8 @@ class OpBinary:
     self.src2 = expectStackLocation(src2,1,16)
   def __repr__(self):
     return f"OpBinary({self.base_op},dst={self.dst},src1={self.src1},src2={self.src2},val_type={self.val_type},cmp_type={self.cmp_type})"
-  def generate(self):
-    return (cmpTypeId(self.cmp_type) << 24 if self.cmp_type else 0) | ((self.src2.index-1) & 0xf) << 20 | ((self.src1.index-1) & 0xf) << 16 | (self.dst.index & 0xf) << 12 | binOpId(self.base_op) << 8 | (valTypeId(self.val_type) | 0x50)
+  def generate(self,ops):
+    ops.append((cmpTypeId(self.cmp_type) << 24 if self.cmp_type else 0) | ((self.src2.index-1) & 0xf) << 20 | ((self.src1.index-1) & 0xf) << 16 | (self.dst.index & 0xf) << 12 | binOpId(self.base_op) << 8 | (valTypeId(self.val_type) | 0x50))
 
 class OpCmpImm:
   def __init__(self,dst,src1,src2,*,val_type,cmp_type,swap_args):
@@ -138,10 +138,10 @@ class OpCmpImm:
     self.src2 = src2
   def __repr__(self):
     return f"OpCmpImm(dst={self.dst},src1={self.src1},src2={self.src2},val_type={self.val_type},cmp_type={self.cmp_type},swap_args={self.swap_args})"
-  def generate(self):
+  def generate(self,ops):
     if self.val_type[0] == "f": raise Exception("float constants are not supported")
     if type(self.src2) != int: raise Exception("unsupported constant type: "+type(self.src2))
-    return self.src2 << 20 | ((0x8 if self.swap_args else 0) | cmpTypeId(self.cmp_type) ) << 16 | ((self.src1.index-1) & 0xf) << 12 | (self.dst.index & 0xf) << 8 | (valTypeId(self.val_type) | 0x30)
+    ops.append(self.src2 << 20 | ((0x8 if self.swap_args else 0) | cmpTypeId(self.cmp_type) ) << 16 | ((self.src1.index-1) & 0xf) << 12 | (self.dst.index & 0xf) << 8 | (valTypeId(self.val_type) | 0x30))
 
 class OpBinaryImm:
   def __init__(self,base_op,dst,src1,src2,*,val_type):
@@ -152,10 +152,10 @@ class OpBinaryImm:
     self.src2 = src2
   def __repr__(self):
     return f"OpBinaryImm({self.base_op},dst={self.dst},src1={self.src1},src2={self.src2},val_type={self.val_type})"
-  def generate(self):
+  def generate(self,ops):
     if self.val_type[0] == "f": raise Exception("float constants are not supported")
     if type(self.src2) != int: raise Exception("unsupported constant type: "+type(self.src2))
-    return self.src2 << 16 | ((self.src1.index-1) & 0xf) << 12 | (self.dst.index & 0xf) << 8 | (valTypeId(self.val_type) | binImmOpId(self.base_op))
+    ops.append(self.src2 << 16 | ((self.src1.index-1) & 0xf) << 12 | (self.dst.index & 0xf) << 8 | (valTypeId(self.val_type) | binImmOpId(self.base_op)))
 
 class OpShiftImm:
   def __init__(self,base_op,dst,src1,src2,*,val_type):
@@ -166,10 +166,10 @@ class OpShiftImm:
     self.src2 = src2
   def __repr__(self):
     return f"OpShiftImm({self.base_op},dst={self.dst},src1={self.src1},src2={self.src2},val_type={self.val_type})"
-  def generate(self):
+  def generate(self,ops):
     if self.val_type[0] == "f": raise Exception("float constants are not supported")
     if type(self.src2) != int: raise Exception("unsupported constant type: "+type(self.src2))
-    return self.src2 << 20 | ((self.src1.index-1) & 0xf) << 16 | (self.dst.index & 0xf) << 12 | unaryOpId(base_op) << 8 | (valTypeId(self.val_type) | 0x58)
+    ops.append(self.src2 << 20 | ((self.src1.index-1) & 0xf) << 16 | (self.dst.index & 0xf) << 12 | unaryOpId(base_op) << 8 | (valTypeId(self.val_type) | 0x58))
 
 class OpUnary:
   def __init__(self,base_op,dst,src,*,val_type):
@@ -179,8 +179,8 @@ class OpUnary:
     self.src = expectStackLocation(src,1,16)
   def __repr__(self):
     return f"OpUnary({self.base_op},dst={self.dst},src={self.src},val_type={self.val_type})"
-  def generate(self):
-    return ((self.src.index-1) & 0xf) << 16 | (self.dst.index & 0xf) << 12 | unaryOpId(self.base_op) << 8 | (valTypeId(self.val_type) | 0x58)
+  def generate(self,ops):
+    ops.append(((self.src.index-1) & 0xf) << 16 | (self.dst.index & 0xf) << 12 | unaryOpId(self.base_op) << 8 | (valTypeId(self.val_type) | 0x58))
 
 class OpCvt:
   def __init__(self,dst,src,*,src_type,signed,dst_type):
@@ -191,8 +191,8 @@ class OpCvt:
     self.src = expectStackLocation(src,1,16)
   def __repr__(self):
     return f"OpCvt(signed={self.signed},dst={self.dst},src={self.src},src_type={self.src_type},dst_type={self.dst_type})"
-  def generate(self):
-    return valTypeId(self.src_type) << 16 | ((self.src.index-1) & 0xf) << 12 | (self.dst.index & 0xf) << 8 | (valTypeId(self.dst_type) | (0x68 if self.signed else 0x60) )
+  def generate(self,ops):
+    ops.append(valTypeId(self.src_type) << 16 | ((self.src.index-1) & 0xf) << 12 | (self.dst.index & 0xf) << 8 | (valTypeId(self.dst_type) | (0x68 if self.signed else 0x60)))
 
 class OpJmp:
   def __init__(self,jmp_type,target,*,is_long_jump=False):
@@ -201,8 +201,8 @@ class OpJmp:
     self.target = target
   def __repr__(self):
     return f"OpJmp({self.jmp_type},target={self.target})"
-  def generate(self):
-    return self.target << 8 | ((0x8 if self.is_long_jump else 0) | jumpTypeId(self.jmp_type) | 0x20)
+  def generate(self,ops):
+    ops.append(self.target << 8 | ((0x8 if self.is_long_jump else 0) | jumpTypeId(self.jmp_type) | 0x20))
 
 class OpJmpIf:
   def __init__(self,jmp_type,arg,target,*,is_long_jump=False):
@@ -212,16 +212,16 @@ class OpJmpIf:
     self.target = target
   def __repr__(self):
     return f"OpJmpIf({self.jmp_type},arg={self.arg},target={self.target})"
-  def generate(self):
-    return self.target << 12 | ((self.arg.index-1)&0xf) | ((0x8 if self.is_long_jump else 0) | jumpTypeId(self.jmp_type) | 0x20)
+  def generate(self,ops):
+    ops.append(self.target << 12 | ((self.arg.index-1)&0xf) | ((0x8 if self.is_long_jump else 0) | jumpTypeId(self.jmp_type) | 0x20))
 
 class OpRet:
   def __init__(self):
     pass
   def __repr__(self):
     return f"OpRet()"
-  def generate(self):
-    return 0xffffff23
+  def generate(self,ops):
+    ops.append(0xffffff23)
 
 # TODO: support variants copyFrom/To, deepSwap
 class OpCopy:
@@ -231,8 +231,8 @@ class OpCopy:
     self.drop_count = drop_count
   def __repr__(self):
     return f"OpCopy(dst={self.dst},src={self.src},drop_count={self.drop_count})"
-  def generate(self):
-    return ((self.src.index-1)&0xf) << 22 | (self.dst.index&0xf) << 12 | (self.drop_count << 8) | 0x89
+  def generate(self,ops):
+    ops.append(((self.src.index-1)&0xf) << 22 | (self.dst.index&0xf) << 12 | (self.drop_count << 8) | 0x89)
 
 class OpSwap:
   def __init__(self,loc1,loc2):
@@ -240,16 +240,16 @@ class OpSwap:
     self.loc2 = expectStackLocation(loc2,1,4096)
   def __repr__(self):
     return f"OpSwap(loc1={self.loc1},loc2={self.loc2})"
-  def generate(self):
-    return ((self.loc2.index-1)&0xf) << 20 | ((self.loc1.index-1)&0xf) << 8 | 0x8c
+  def generate(self,ops):
+    ops.append(((self.loc2.index-1)&0xf) << 20 | ((self.loc1.index-1)&0xf) << 8 | 0x8c)
 
 class OpAlloc:
   def __init__(self,count):
     self.count = count
   def __repr__(self):
     return f"OpAlloc(count={self.count})"
-  def generate(self):
-    return self.count << 8 | 0x90
+  def generate(self,ops):
+    ops.append(self.count << 8 | 0x90)
 
 class OpData:
   def __init__(self,val_type,data):
@@ -257,8 +257,20 @@ class OpData:
     self.data = data
   def __repr__(self):
     return f"OpData(val_type={self.val_type},data={self.data})"
-  def generate(self):
-    return 0 ## TODO: generate data
+  def generate(self,ops):
+    if self.val_type == "i32":
+      ops += self.data
+      return
+    if self.val_type != "i8": raise Exception(f"encoding {self.val_type} data is not yet supported")
+    data_bytes = [*self.data]
+    if len(data_bytes) % 4 != 0: ## align length to multiple of 4
+      data_bytes+=[0]*(4 - len(data_bytes)%4)
+    for i in range(len(data_bytes)//4):
+      val = 0; shift = 0;
+      for j in range(4):
+        val |= data_bytes[4*i+j]<<shift
+        shift += 8
+      ops.append(val)
 
 def parseLoc(val):
   if val[0] != '@':
@@ -540,7 +552,10 @@ def parseFile(srcFile="src.txt"):
   with open(srcFile,mode="r") as f:
     ops = parse(f.read())
   print(*ops,sep='\n')
-  return [op.generate() for op in ops]
+  code = []
+  for op in ops:
+    op.generate(code)
+  return code
 
 def writeU32(f,val):
     f.write(bytes([(val >> 8*s) & 0xFF for s in range(4)]))
