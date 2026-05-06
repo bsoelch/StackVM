@@ -14,10 +14,12 @@ class RelativeAddress:
     return f"RelativeAddress({self.base},{self.offset})"
 
 class Label:
-  def __init__(self,name):
+  def __init__(self,name,*,offset = 0,base = None):
     self.name = name
+    self.offset = offset
+    self.base = base
   def __repr__(self):
-    return f"Label({self.name})"
+    return f"Label({self.name},offset={self.offset},base={self.base})"
 
 def expectStackLocation(val,minIndex,maxIndex):
   if type(val) != StackLocation:
@@ -80,6 +82,16 @@ class OpLoadRelative:
   def generate(self,prog):
     prog.appendU32(self.offset << 14 | (encodeSize(self.size) << 12) | ((self.val.index-self.is_store) & 0xf) << 8 | loadBaseId(self.base,self.is_store))
 
+class OpLoadLabel:
+  def __init__(self,base,is_store,size,val,offset):
+    self.is_store = is_store
+    self.size = size
+    self.val = expectStackLocation(val,0+self.is_store,15+self.is_store)
+    self.base = base
+    self.offset = offset
+  def __repr__(self):
+    return f"OpLoadLabel(base={self.base},is_store={self.is_store},size={self.size},val={self.val},offset={self.offset})"
+
 class OpLoad2:
   def __init__(self,is_store,val1,val2,src,offset):
     self.is_store = is_store
@@ -103,6 +115,16 @@ class OpLoad2Relative:
     return f"OpLoad2Relative(base={self.base},is_store={self.is_store},val1={self.val1},val2={self.val2},offset={self.offset})"
   def generate(self,prog):
     prog.appendU32(self.offset << 16 | ((self.val2.index-self.is_store) & 0xf) << 12 | ((self.val1.index-self.is_store) & 0xf) << 8 | loadBaseId(self.base,self.is_store) | LOAD2_FLAG)
+
+class OpLoad2Label:
+  def __init__(self,base,is_store,val1,val2,offset):
+    self.is_store = is_store
+    self.val1 = expectStackLocation(val1,0+self.is_store,15+self.is_store)
+    self.val2 = expectStackLocation(val2,0+self.is_store,15+self.is_store)
+    self.base = base
+    self.offset = offset
+  def __repr__(self):
+    return f"OpLoad2Label(base={self.base},is_store={self.is_store},val1={self.val1},val2={self.val2},offset={self.offset})"
 
 class OpAddr:
   def __init__(self,base,dst,offset):
@@ -250,18 +272,43 @@ class OpAlloc:
   def generate(self,prog):
     prog.appendU32(self.count << 8 | 0x90)
 
+class OpLabel:
+  def __init__(self,name):
+    self.name = name
+  def __repr__(self):
+    return f"OpLabel(name={self.name})"
+  def generate(self,prog):
+    pass
+
 class OpData:
-  def __init__(self,val_type,data):
+  def __init__(self,val_type,data,*,has_label):
     self.val_type = val_type
+    self.has_label_arg = has_label
     self.data = data
   def __repr__(self):
     return f"OpData(val_type={self.val_type},data={self.data})"
   def generate(self,prog):
+    if self.val_type == "i8":
+      prog.appendBytes(self.data)
+      return
+    if self.val_type == "i64":
+      prog.appendU64s(self.data)
+      return
     if self.val_type == "i32":
       prog.appendU32s(self.data)
       return
-    if self.val_type != "i8": raise Exception(f"encoding {self.val_type} data is not yet supported")
-    prog.appendBytes(self.data)
+    if self.val_type == "i16":
+      prog.appendU16s(self.data)
+      return
+    raise Exception(f"encoding {self.val_type} data is not yet supported")
+
+class OpAlign:
+  def __init__(self,byte_alignment):
+    self.byte_alignment = byte_alignment
+  def __repr__(self):
+    return f"OpAlign(byte_alignment={self.byte_alignment})"
+  def generate(self,prog):
+    prog.align(self.byte_alignment)
 
 class OpSection:
   def __init__(self,name):
@@ -298,6 +345,10 @@ class Program:
       self.code.extend(vals)
     else:
       for val in vals:self.appendU32(val)
+  def appendU64s(self,vals):
+    self.appendBytes((b for val in vals for b in val.to_bytes(8, byteorder="little", signed=False)))
+  def appendU16s(self,vals):
+    self.appendBytes((b for val in vals for b in val.to_bytes(2, byteorder="little", signed=False)))
   def appendBytes(self,vals):
     if self.section == "code":
       self.code.extend([int.from_bytes(vals[4*i:4*i+4],byteorder="little",signed=False)for i in range((len(vals)+3)//4)])
@@ -305,29 +356,20 @@ class Program:
       self.ro_data.extend(vals)
     elif self.section == "rw_data":
       self.rw_data.extend(vals)
+  def align(self,byte_alignment):
+    if byte_alignment < 2: return
+    if self.section == "code":
+      if byte_alignment < 4: return
+      byte_alignment//=4
+      self.code.extend([0]*(byte_alignment-len(self.code)%byte_alignment))
+    elif self.section == "ro_data":
+      self.ro_data.extend([0]*(byte_alignment-len(self.ro_data)%byte_alignment))
+    elif self.section == "rw_data":
+      self.rw_data.extend([0]*(byte_alignment-len(self.rw_data)%byte_alignment))
 
 def parseLoc(val):
   if val[0] != '@':
     raise Exception("location has to start with @ got: "+val)
-  if val.startswith("@ip"):
-    if len(val) == 3: return RelativeAddress("ip",0)
-    if val[3] not in "+-":raise Exception("offset has to start with + or -: "+val)
-    return RelativeAddress("ip",int(val[3:]))
-  if val.startswith("@bp"):
-    if len(val) == 3: return RelativeAddress("bp",0)
-    if val[3] not in "+-":raise Exception("offset has to start with + or -: "+val)
-    return RelativeAddress("bp",int(val[3:]))
-  if val.startswith("@ro_data"):
-    if len(val) == 8: return RelativeAddress("ro_data",0)
-    if val[8] not in "+-":raise Exception("offset has to start with + or -: "+val)
-    return RelativeAddress("ro_data",int(val[8:]))
-  if val.startswith("@rw_data"):
-    if len(val) == 8: return RelativeAddress("rw_data",0)
-    if val[8] not in "+-":raise Exception("offset has to start with + or -: "+val)
-    return RelativeAddress("rw_data",int(val[8:]))
-  if "+" in val:
-    base,offset = val.split("+")
-    return RelativeAddress(StackLocation(int(base[1:])),int(offset))
   return StackLocation(int(val[1:]))
 
 def parseInt(val):
@@ -338,20 +380,64 @@ def parseInt(val):
     return int(val[2:],16)
   return int(val[1:])
 
+def parseLabel(val):
+  if val[0] != ':':
+    raise Exception("label has to start with : got: "+val)
+  if "+" in val:
+    base,offset = val.split("+")
+    return Label(base[1:],offset = int(offset))
+  if "-" in val:
+    base,offset = val.split("-")
+    if offset[0] == ':':
+      return Label(base[1:],base = offset[1:])
+    else:
+      return Label(base[1:],offset = int(offset))
+  return Label(val[1:])
+
 def parseArg(val):
   ## offset-val: :label+offset, @<index>+offset, @ip+offset, @bp+offset
   if val[0] == '@':
     return parseLoc(val)
   if val[0] == ':':
-    return Label(val[1:])
+    return parseLabel(val)
   return parseInt(val)
+
+def parseAbsoluteAddress(val):
+  if val[0] == ':':
+    return parseLabel(val)
+  if val.startswith("@ro_data"):
+    if len(val) == 8: return RelativeAddress("ro_data",0)
+    if val[8] not in "+-":raise Exception("offset has to start with + or -: "+val)
+    return RelativeAddress("ro_data",int(val[8:]))
+  if val.startswith("@rw_data"):
+    if len(val) == 8: return RelativeAddress("rw_data",0)
+    if val[8] not in "+-":raise Exception("offset has to start with + or -: "+val)
+    return RelativeAddress("rw_data",int(val[8:]))
+  return parseInt(val)
+
+def parseAddress(val):
+  if val.startswith("@ip"):
+    if len(val) == 3: return RelativeAddress("ip",0)
+    if val[3] not in "+-":raise Exception("offset has to start with + or -: "+val)
+    return RelativeAddress("ip",int(val[3:]))
+  if val.startswith("@bp"):
+    if len(val) == 3: return RelativeAddress("bp",0)
+    if val[3] not in "+-":raise Exception("offset has to start with + or -: "+val)
+    return RelativeAddress("bp",int(val[3:]))
+  if val[0] == '@':
+    if "+" in val:
+      base,offset = val.split("+")
+      return RelativeAddress(StackLocation(int(base[1:])),int(offset))
+    return parseLoc(val)
+  return parseAbsoluteAddress(val)
 
 def parseData(val,val_type):
   if val[0] == '"':
     if val_type != "i8": raise Exception("string-data is only supported for type i8")
     return [*bytes(val[1:],encoding="utf8")]
-  if val[0] == ':':
-    return [Label(val[1:])]
+  if val[0] != '$':
+    if val_type != "i64": raise Exception("label-data is only supported for type i64")
+    return [parseAbsoluteAddress(val)]
   return [parseInt(val)]
 
 def parseCmpType(cmp_type):
@@ -406,7 +492,9 @@ def splitLine(line):
     line = line[i+1:]
   return op_code, args
 
+has_label = False
 def parseLine(line):
+  global has_label
   line = line.strip()
   hash_pos = line.find('#')
   if hash_pos != -1:
@@ -448,6 +536,9 @@ def parseLine(line):
     elif type(addr) == RelativeAddress:
       if is_store and addr.base in ["ip","ro_data"]: raise Exception(f"cannot store to {addr.base}-relative address")
       return [OpLoadRelative(addr.base,is_store,size,dst,addr.offset)]
+    elif type(addr) == Label:
+      has_label = True
+      return [OpLoadLabel(addr,is_store,dst,0)]
     else:
       raise Exception(f"load/store is not implemented: {size} {dst} {addr}")
   elif op_code == "load2" or op_code == "store2":
@@ -462,6 +553,9 @@ def parseLine(line):
     elif type(addr) == RelativeAddress:
       if is_store and addr.base in ["ip","ro_data"]: raise Exception(f"cannot store to {addr.base}-relative address")
       return [OpLoad2Relative(addr.base,is_store,dst1,dst2,addr.offset)]
+    elif type(addr) == Label:
+      has_label = True
+      return [OpLoad2Label(addr,is_store,dst1,dst2,0)]
     else:
       raise Exception(f"load2/store2 is not implemented: {dst1} {dst2} {addr}")
   elif op_code == "addr":
@@ -576,7 +670,14 @@ def parseLine(line):
   elif op_code.startswith("data."):
     val_type = op_code[len("data."):]
     args = [elt for arg in args for elt in parseData(arg,val_type)]
-    return [OpData(val_type, args)]
+    has_label_arg = any(type(arg) == Label for arg in args)
+    has_label |= has_label_arg
+    return [OpData(val_type, args, has_label = has_label_arg)]
+  elif op_code == "!align":
+    alignment = parseInt(args[0])
+    if (alignment & -alignment) != alignment:
+      raise Exception("alignment has to be a power of 2: "+alignment)
+    return [OpAlign(alignment)]
   elif op_code == "!section":
     section_name = args[0]
     if section_name not in ["code","ro_data","rw_data"]:
@@ -584,15 +685,27 @@ def parseLine(line):
     return [OpSection(section_name)]
   elif op_code == "!start":
     return [OpStart()]
+  elif op_code[0] == ':':
+    return [OpLabel(op_code[1:])]
   raise Exception("unknown op_code: "+op_code)
 
 def parse(code):
   return [op for ops in [parseLine(line)for line in code.split('\n')] for op in ops]
 
 def parseFile(srcFile="src.txt"):
+  ## TODO: parse into program-class, split ops into sections in parse phase
+  global has_label
+  has_label = False
   with open(srcFile,mode="r") as f:
     ops = parse(f.read())
   print(*ops,sep='\n')
+  if has_label:
+    ## 0. set all label offsets to 0
+    ## 1. go through program and compute addresses of operations (relative to section base)
+    ## 2. assign values to labels
+    ## 3. if operation changed size go back to 1
+    ## 4. replace labels with their integer values
+    raise Exception("label-resolving is not yet implemented")
   prog = Program()
   for op in ops:
     op.generate(prog)
