@@ -310,14 +310,6 @@ class OpAlign:
   def generate(self,prog):
     prog.align(self.byte_alignment)
 
-class OpSection:
-  def __init__(self,name):
-    self.name = name
-  def __repr__(self):
-    return f"OpSection(name={self.name})"
-  def generate(self,prog):
-    prog.section = self.name
-
 class OpStart:
   def __init__(self):
     pass
@@ -492,214 +484,236 @@ def splitLine(line):
     line = line[i+1:]
   return op_code, args
 
-has_label = False
-def parseLine(line):
-  global has_label
-  line = line.strip()
-  hash_pos = line.find('#')
-  if hash_pos != -1:
-    line = line[:hash_pos]
-  op_code, args = splitLine(line)
-  if len(op_code) == 0:
-    return []
-  if op_code == "loadi":
-    dst = parseLoc(args[0])
-    arg = parseInt(args[1])
-    if arg > LOADI_MAX_VAL or arg < LOADI_MIN_VAL:
-      raise Exception(f"argument of loadi has to be between {LOADI_MIN_VAL} and {LOADI_MAX_VAL}")
-    ## TODO? automatically split value into multiple loadi's
-    return [OpLoadi(dst,arg, shift = 0)]
-  elif op_code.startswith("loadi."):
-    dst = parseLoc(args[0])
-    arg = parseInt(args[1])
-    if arg > LOADI_MAX_VAL or arg < LOADI_MIN_VAL:
-      raise Exception(f"argument of loadi has to be between {LOADI_MIN_VAL} and {LOADI_MAX_VAL}")
-    shift = int(op_code[len("loadi."):])
-    if shift < 0 or shift > 44:
-      raise Exception(f"shift has to be between 0 and 44 got: {shift}")
-    if (shift % 4) != 0:
-      raise Exception(f"shift has to be divisible by 4 got: {shift}")
-    shift //= 4
-    return [OpLoadi(dst,arg, shift = shift)]
-  elif op_code.startswith("load.") or op_code.startswith("store."):
-    is_store = (op_code[0] == 's')
-    size = int(op_code[(len("store.") if is_store else len("load.")):])
-    if size not in [1,2,4,8]:
-      raise Exception(f"size has to be one of 1,2,4,8 got: {size}")
-    dst = parseLoc(args[0])
-    addr = parseArg(args[1])
-    ## TODO: check offset range
-    if type(addr) == StackLocation:
-      return [OpLoad(is_store,size,dst,addr,0)]
-    elif type(addr) == RelativeAddress and type(addr.base) == StackLocation:
-      return [OpLoad(is_store,size,dst,addr.base,addr.offset)]
-    elif type(addr) == RelativeAddress:
-      if is_store and addr.base in ["ip","ro_data"]: raise Exception(f"cannot store to {addr.base}-relative address")
-      return [OpLoadRelative(addr.base,is_store,size,dst,addr.offset)]
-    elif type(addr) == Label:
-      has_label = True
-      return [OpLoadLabel(addr,is_store,dst,0)]
+class SourceFile:
+  def __init__(self):
+    self.has_label = False
+    self.code = []
+    self.ro_data = []
+    self.rw_data = []
+    self.section = "code"
+
+  def appendOp(self,value):
+    if self.section == "code":
+      self.code.append(value)
+    elif self.section == "ro_data":
+      self.code.append(value)
+    elif self.section == "rw_data":
+      self.code.append(value)
     else:
-      raise Exception(f"load/store is not implemented: {size} {dst} {addr}")
-  elif op_code == "load2" or op_code == "store2":
-    is_store = (op_code[0] == 's')
-    dst1 = parseLoc(args[0])
-    dst2 = parseLoc(args[1])
-    addr = parseArg(args[2])
-    if type(addr) == StackLocation:
-      return [OpLoad2(is_store,dst1,dst2,addr,0)]
-    elif type(addr) == RelativeAddress and type(addr.base) == StackLocation:
-      return [OpLoad2(is_store,dst1,dst2,addr.base,addr.offset)]
-    elif type(addr) == RelativeAddress:
-      if is_store and addr.base in ["ip","ro_data"]: raise Exception(f"cannot store to {addr.base}-relative address")
-      return [OpLoad2Relative(addr.base,is_store,dst1,dst2,addr.offset)]
-    elif type(addr) == Label:
-      has_label = True
-      return [OpLoad2Label(addr,is_store,dst1,dst2,0)]
-    else:
-      raise Exception(f"load2/store2 is not implemented: {dst1} {dst2} {addr}")
-  elif op_code == "addr":
-    dst = parseLoc(args[0])
-    addr = parseArg(args[1])
-    if type(addr) == RelativeAddress and type(addr.base) != StackLocation:
-      return [OpAddr(addr.base,dst,addr.offset)]
-    else:
-      raise Exception(f"addr is not implemented: {dst} {addr}")
-  elif (op_code.startswith("cmp.") or op_code.startswith("cmpi.") or
-     op_code.startswith("add.") or op_code.startswith("addi.") or
-     op_code.startswith("sub.") or op_code.startswith("subi.") or
-     op_code.startswith("mul.") or  op_code.startswith("muli.") or
-     op_code.startswith("and.") or op_code.startswith("andi.") or
-     op_code.startswith("or.") or op_code.startswith("ori.") or op_code.startswith("xor.") or
-     op_code.startswith("shl.") or op_code.startswith("lshr.") or op_code.startswith("ashr.") or
-     op_code.startswith("shli.") or op_code.startswith("lshri.") or op_code.startswith("ashri.")
-    ):
-    base_op, val_type = op_code.split('.')
-    is_immediate = False
-    if base_op[-1] == 'i':
-      is_immediate = True
-      base_op = base_op[:-1]
-    val_type = parseValType(val_type)
-    need_swap = False
-    if base_op == "cmp":
-      cmp_type, need_swap = parseCmpType(args[0])
-      args = args[1:]
-    else:
-      cmp_type = None
-    dst = parseLoc(args[0])
-    src1 = parseArg(args[1])
-    if type(src1) != StackLocation: is_immediate = True
-    src2 = parseArg(args[2])
-    if type(src2) != StackLocation: is_immediate = True
-    if need_swap:
-      src1, src2 = src2, src1
-    if is_immediate:
-      if base_op == "cmp":
-        swap_args = False
-        if type(src1) != StackLocation:
-          if type(src2) != StackLocation:
-            raise Exception(f"at least one operand of {base_op}i has to be StackLocation")
-          src1, src2 = src2, src1
-          swap_args = True
-        return [OpCmpImm(dst,src1,src2, cmp_type = cmp_type,val_type = val_type,swap_args = swap_args)]
-      elif base_op == "sub": ## sub val, imm -> add val, -imm
-        if type(src1) != StackLocation:
-          raise Exception(f"left operand of {base_op}i has to be StackLocation")
-        if type(src2) != int and type(src) != float:
-          raise Exception(f"unsupported operand for {base_op}i: "+src2)
-        return [OpBinaryImm("add",dst,src1,-src2, val_type = val_type)]
-      elif base_op in ["add","mul","and","or"]:
-        if type(src1) != StackLocation:
-          if type(src2) != StackLocation:
-            raise Exception(f"at least one operand of {base_op}i has to be StackLocation")
-          src1, src2 = src2, src1 ## operation is commutative
-        return [OpBinaryImm(base_op,dst,src1,src2, val_type = val_type)]
-      elif base_op in ["shl","lshr","ashr"]:
-        if type(src1) != StackLocation:
-          raise Exception(f"left operand of {base_op}i has to be StackLocation")
-        return [OpShiftImm(base_op,dst,src1,src2, val_type = val_type)]
+      raise Exception("unsupported section: "+self.section)
+    
+  def parseLine(self,line):
+    line = line.strip()
+    hash_pos = line.find('#')
+    if hash_pos != -1:
+      line = line[:hash_pos]
+    op_code, args = splitLine(line)
+    if len(op_code) == 0:
+      return
+    if op_code == "loadi":
+      dst = parseLoc(args[0])
+      arg = parseInt(args[1])
+      if arg > LOADI_MAX_VAL or arg < LOADI_MIN_VAL:
+        raise Exception(f"argument of loadi has to be between {LOADI_MIN_VAL} and {LOADI_MAX_VAL}")
+      ## TODO? automatically split value into multiple loadi's
+      self.appendOp(OpLoadi(dst,arg, shift = 0))
+    elif op_code.startswith("loadi."):
+      dst = parseLoc(args[0])
+      arg = parseInt(args[1])
+      if arg > LOADI_MAX_VAL or arg < LOADI_MIN_VAL:
+        raise Exception(f"argument of loadi has to be between {LOADI_MIN_VAL} and {LOADI_MAX_VAL}")
+      shift = int(op_code[len("loadi."):])
+      if shift < 0 or shift > 44:
+        raise Exception(f"shift has to be between 0 and 44 got: {shift}")
+      if (shift % 4) != 0:
+        raise Exception(f"shift has to be divisible by 4 got: {shift}")
+      shift //= 4
+      self.appendOp(OpLoadi(dst,arg, shift = shift))
+    elif op_code.startswith("load.") or op_code.startswith("store."):
+      is_store = (op_code[0] == 's')
+      size = int(op_code[(len("store.") if is_store else len("load.")):])
+      if size not in [1,2,4,8]:
+        raise Exception(f"size has to be one of 1,2,4,8 got: {size}")
+      dst = parseLoc(args[0])
+      addr = parseArg(args[1])
+      ## TODO: check offset range
+      if type(addr) == StackLocation:
+        self.appendOp(OpLoad(is_store,size,dst,addr,0))
+      elif type(addr) == RelativeAddress and type(addr.base) == StackLocation:
+        self.appendOp(OpLoad(is_store,size,dst,addr.base,addr.offset))
+      elif type(addr) == RelativeAddress:
+        if is_store and addr.base in ["ip","ro_data"]: raise Exception(f"cannot store to {addr.base}-relative address")
+        self.appendOp(OpLoadRelative(addr.base,is_store,size,dst,addr.offset))
+      elif type(addr) == Label:
+        self.has_label = True
+        self.appendOp(OpLoadLabel(addr,is_store,dst,0))
       else:
-        raise Exception("unsupported operation for immediate: "+base_op)
-    return [OpBinary(base_op,dst,src1,src2, cmp_type = cmp_type,val_type = val_type)]
-  elif op_code.startswith("neg.") or op_code.startswith("not."):
-    base_op, val_type = op_code.split('.')
-    val_type = parseValType(val_type)
-    dst = parseLoc(args[0])
-    src = parseLoc(args[1])
-    return [OpUnary(base_op, dst, src,val_type = val_type)]
-  elif op_code.startswith("cvts.") or op_code.startswith("cvtu."):
-    base_op, src_type, dst_type = op_code.split('.')
-    src_type = parseValType(src_type)
-    dst_type = parseValType(dst_type)
-    signed = base_op == "cvts"
-    dst = parseLoc(args[0])
-    src = parseLoc(args[1])
-    return [OpCvt(dst, src,src_type = src_type,signed = signed,dst_type = dst_type)]
-  ## TODO? seperate op-code for long-jump/long-call `ljmp`(?)
-  elif op_code == "jmp" or op_code == "call" or op_code == "jmp.abs" or op_code == "call.abs":
-    target = parseArg(args[0]) # TODO check target range
-    return [OpJmp(op_code, target)]
-  elif op_code == "ret":
-    return [OpRet()]
-  elif op_code == "jz" or op_code == "jnz":
-    target = parseArg(args[1]) # TODO check target range
-    if args[0] == "pop":
-      return [OpJmp(op_code + " pop", target)]
+        raise Exception(f"load/store is not implemented: {size} {dst} {addr}")
+    elif op_code == "load2" or op_code == "store2":
+      is_store = (op_code[0] == 's')
+      dst1 = parseLoc(args[0])
+      dst2 = parseLoc(args[1])
+      addr = parseArg(args[2])
+      if type(addr) == StackLocation:
+        self.appendOp(OpLoad2(is_store,dst1,dst2,addr,0))
+      elif type(addr) == RelativeAddress and type(addr.base) == StackLocation:
+        self.appendOp(OpLoad2(is_store,dst1,dst2,addr.base,addr.offset))
+      elif type(addr) == RelativeAddress:
+        if is_store and addr.base in ["ip","ro_data"]: raise Exception(f"cannot store to {addr.base}-relative address")
+        self.appendOp(OpLoad2Relative(addr.base,is_store,dst1,dst2,addr.offset))
+      elif type(addr) == Label:
+        self.has_label = True
+        self.appendOp(OpLoad2Label(addr,is_store,dst1,dst2,0))
+      else:
+        raise Exception(f"load2/store2 is not implemented: {dst1} {dst2} {addr}")
+    elif op_code == "addr":
+      dst = parseLoc(args[0])
+      addr = parseArg(args[1])
+      if type(addr) == RelativeAddress and type(addr.base) != StackLocation:
+        self.appendOp(OpAddr(addr.base,dst,addr.offset))
+      else:
+        raise Exception(f"addr is not implemented: {dst} {addr}")
+    elif (op_code.startswith("cmp.") or op_code.startswith("cmpi.") or
+       op_code.startswith("add.") or op_code.startswith("addi.") or
+       op_code.startswith("sub.") or op_code.startswith("subi.") or
+       op_code.startswith("mul.") or  op_code.startswith("muli.") or
+       op_code.startswith("and.") or op_code.startswith("andi.") or
+       op_code.startswith("or.") or op_code.startswith("ori.") or op_code.startswith("xor.") or
+       op_code.startswith("shl.") or op_code.startswith("lshr.") or op_code.startswith("ashr.") or
+       op_code.startswith("shli.") or op_code.startswith("lshri.") or op_code.startswith("ashri.")
+      ):
+      base_op, val_type = op_code.split('.')
+      is_immediate = False
+      if base_op[-1] == 'i':
+        is_immediate = True
+        base_op = base_op[:-1]
+      val_type = parseValType(val_type)
+      need_swap = False
+      if base_op == "cmp":
+        cmp_type, need_swap = parseCmpType(args[0])
+        args = args[1:]
+      else:
+        cmp_type = None
+      dst = parseLoc(args[0])
+      src1 = parseArg(args[1])
+      if type(src1) != StackLocation: is_immediate = True
+      src2 = parseArg(args[2])
+      if type(src2) != StackLocation: is_immediate = True
+      if need_swap:
+        src1, src2 = src2, src1
+      if is_immediate:
+        if base_op == "cmp":
+          swap_args = False
+          if type(src1) != StackLocation:
+            if type(src2) != StackLocation:
+              raise Exception(f"at least one operand of {base_op}i has to be StackLocation")
+            src1, src2 = src2, src1
+            swap_args = True
+          self.appendOp(OpCmpImm(dst,src1,src2, cmp_type = cmp_type,val_type = val_type,swap_args = swap_args))
+        elif base_op == "sub": ## sub val, imm -> add val, -imm
+          if type(src1) != StackLocation:
+            raise Exception(f"left operand of {base_op}i has to be StackLocation")
+          if type(src2) != int and type(src) != float:
+            raise Exception(f"unsupported operand for {base_op}i: "+src2)
+          self.appendOp(OpBinaryImm("add",dst,src1,-src2, val_type = val_type))
+        elif base_op in ["add","mul","and","or"]:
+          if type(src1) != StackLocation:
+            if type(src2) != StackLocation:
+              raise Exception(f"at least one operand of {base_op}i has to be StackLocation")
+            src1, src2 = src2, src1 ## operation is commutative
+          self.appendOp(OpBinaryImm(base_op,dst,src1,src2, val_type = val_type))
+        elif base_op in ["shl","lshr","ashr"]:
+          if type(src1) != StackLocation:
+            raise Exception(f"left operand of {base_op}i has to be StackLocation")
+          self.appendOp(OpShiftImm(base_op,dst,src1,src2, val_type = val_type))
+        else:
+          raise Exception("unsupported operation for immediate: "+base_op)
+      self.appendOp(OpBinary(base_op,dst,src1,src2, cmp_type = cmp_type,val_type = val_type))
+    elif op_code.startswith("neg.") or op_code.startswith("not."):
+      base_op, val_type = op_code.split('.')
+      val_type = parseValType(val_type)
+      dst = parseLoc(args[0])
+      src = parseLoc(args[1])
+      self.appendOp(OpUnary(base_op, dst, src,val_type = val_type))
+    elif op_code.startswith("cvts.") or op_code.startswith("cvtu."):
+      base_op, src_type, dst_type = op_code.split('.')
+      src_type = parseValType(src_type)
+      dst_type = parseValType(dst_type)
+      signed = base_op == "cvts"
+      dst = parseLoc(args[0])
+      src = parseLoc(args[1])
+      self.appendOp(OpCvt(dst, src,src_type = src_type,signed = signed,dst_type = dst_type))
+    ## TODO? seperate op-code for long-jump/long-call `ljmp`(?)
+    elif op_code == "jmp" or op_code == "call" or op_code == "jmp.abs" or op_code == "call.abs":
+      target = parseArg(args[0]) # TODO check target range
+      self.appendOp(OpJmp(op_code, target))
+    elif op_code == "ret":
+      self.appendOp(OpRet())
+    elif op_code == "jz" or op_code == "jnz":
+      target = parseArg(args[1]) # TODO check target range
+      if args[0] == "pop":
+        self.appendOp(OpJmp(op_code + " pop", target))
+      else:
+        arg = parseLoc(args[0])
+        self.appendOp(OpJmpIf(op_code, arg, target))
+    elif op_code == "copy":
+      loc1 = parseLoc(args[0])
+      loc2 = parseLoc(args[1])
+      self.appendOp(OpCopy(loc1, loc2, drop_count = 0))
+    elif op_code.startswith("copy.drop"):
+      drop_count = int(op_code[len("copy.drop"):])
+      loc1 = parseLoc(args[0])
+      loc2 = parseLoc(args[1])
+      self.appendOp(OpCopy(loc1, loc2, drop_count = drop_count))
+    elif op_code == "swap":
+      loc1 = parseLoc(args[0])
+      loc2 = parseLoc(args[1])
+      self.appendOp(OpSwap(loc1, loc2))
+    ## TODO: remaining stack modifications
+    elif op_code == "alloc" or op_code == "dealloc":
+      count = parseInt(args[0])
+      if op_code[0] == "d":
+        count = -count
+      self.appendOp(OpAlloc(count))
+    elif op_code.startswith("data."):
+      val_type = op_code[len("data."):]
+      args = [elt for arg in args for elt in parseData(arg,val_type)]
+      has_label_arg = any(type(arg) == Label for arg in args)
+      self.has_label |= has_label_arg
+      self.appendOp(OpData(val_type, args, has_label = has_label_arg))
+    elif op_code == "!align":
+      alignment = parseInt(args[0])
+      if (alignment & -alignment) != alignment:
+        raise Exception("alignment has to be a power of 2: "+alignment)
+      self.appendOp(OpAlign(alignment))
+    elif op_code == "!section":
+      section_name = args[0]
+      if section_name not in ["code","ro_data","rw_data"]:
+        raise Exception("unsupported section name: "+section_name)
+      self.section = section_name
+    elif op_code == "!start":
+      self.appendOp(OpStart())
+    elif op_code[0] == ':':
+      self.appendOp(OpLabel(op_code[1:]))
     else:
-      arg = parseLoc(args[0])
-      return [OpJmpIf(op_code, arg, target)]
-  elif op_code == "copy":
-    loc1 = parseLoc(args[0])
-    loc2 = parseLoc(args[1])
-    return [OpCopy(loc1, loc2, drop_count = 0)]
-  elif op_code.startswith("copy.drop"):
-    drop_count = int(op_code[len("copy.drop"):])
-    loc1 = parseLoc(args[0])
-    loc2 = parseLoc(args[1])
-    return [OpCopy(loc1, loc2, drop_count = drop_count)]
-  elif op_code == "swap":
-    loc1 = parseLoc(args[0])
-    loc2 = parseLoc(args[1])
-    return [OpSwap(loc1, loc2)]
-  ## TODO: remaining stack modifications
-  elif op_code == "alloc" or op_code == "dealloc":
-    count = parseInt(args[0])
-    if op_code[0] == "d":
-      count = -count
-    return [OpAlloc(count)]
-  elif op_code.startswith("data."):
-    val_type = op_code[len("data."):]
-    args = [elt for arg in args for elt in parseData(arg,val_type)]
-    has_label_arg = any(type(arg) == Label for arg in args)
-    has_label |= has_label_arg
-    return [OpData(val_type, args, has_label = has_label_arg)]
-  elif op_code == "!align":
-    alignment = parseInt(args[0])
-    if (alignment & -alignment) != alignment:
-      raise Exception("alignment has to be a power of 2: "+alignment)
-    return [OpAlign(alignment)]
-  elif op_code == "!section":
-    section_name = args[0]
-    if section_name not in ["code","ro_data","rw_data"]:
-      raise Exception("unsupported section name: "+section_name)
-    return [OpSection(section_name)]
-  elif op_code == "!start":
-    return [OpStart()]
-  elif op_code[0] == ':':
-    return [OpLabel(op_code[1:])]
-  raise Exception("unknown op_code: "+op_code)
+      raise Exception("unknown op_code: "+op_code)
 
 def parse(code):
-  return [op for ops in [parseLine(line)for line in code.split('\n')] for op in ops]
+  src = SourceFile()
+  for line in code.split('\n'):
+    src.parseLine(line)
+  return src
 
 def parseFile(srcFile="src.txt"):
   ## TODO: parse into program-class, split ops into sections in parse phase
-  global has_label
-  has_label = False
   with open(srcFile,mode="r") as f:
-    ops = parse(f.read())
-  print(*ops,sep='\n')
-  if has_label:
+    src = parse(f.read())
+  print(*src.code,sep='\n')
+  print()
+  print(*src.ro_data,sep='\n')
+  print()
+  print(*src.rw_data,sep='\n')
+  if src.has_label:
     ## 0. set all label offsets to 0
     ## 1. go through program and compute addresses of operations (relative to section base)
     ## 2. assign values to labels
@@ -707,7 +721,11 @@ def parseFile(srcFile="src.txt"):
     ## 4. replace labels with their integer values
     raise Exception("label-resolving is not yet implemented")
   prog = Program()
-  for op in ops:
+  for op in src.code:
+    op.generate(prog)
+  for op in src.ro_data:
+    op.generate(prog)
+  for op in src.rw_data:
     op.generate(prog)
   return prog
 
