@@ -430,7 +430,7 @@ fn cmp_type_name(cmp_type: u32) -> &'static str {
 fn run(program: &mut Program) {
     let mut ip: usize = program.ip as usize;
     let mut val_stack: Vec<u64> = Vec::new();
-    let mut rbp: u64 = 0;
+    let mut rbp: u64 = program.sp;
     while ip < program.code.len() {
       let op = program.code[ip];
       ip += 1;
@@ -1015,9 +1015,6 @@ fn run(program: &mut Program) {
           let res = op_cvt(stack_get(&val_stack,src),src_type,signed,dst_type);
           stack_set(res,&mut val_stack,dst)
         }
-        0x70 => { // local-alloc [count:24s]
-          panic!("unimplemented: local-alloc");
-        }
         0x80 => { // drop [imm:24]
             let count = op_data as usize;
             if TRACE {println!("drop ${}",count);}
@@ -1194,6 +1191,16 @@ fn run(program: &mut Program) {
             stack_set(val4,&mut val_stack,a1);
             stack_set(val5,&mut val_stack,a2);
             stack_set(val6,&mut val_stack,a3);
+        }
+        0x90 => { // local-alloc [count:24s]
+          let count = ((op as i32) >> base_shift) as i64;
+          if count > 0 {
+            if TRACE {println!("alloc ${}",count);}
+            rbp = (rbp as i64 - (count+7)&-8) as u64;
+          } else {
+            if TRACE {println!("dealloc ${}",-count);}
+            rbp = (rbp as i64 - (count-7)&-8) as u64;
+          }
         }
         _ => panic!("unknown op-code 0x{:x}",op_type),
       }

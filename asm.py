@@ -243,6 +243,14 @@ class OpSwap:
   def generate(self):
     return ((self.loc2.index-1)&0xf) << 20 | ((self.loc1.index-1)&0xf) << 8 | 0x8c
 
+class OpAlloc:
+  def __init__(self,count):
+    self.count = count
+  def __repr__(self):
+    return f"OpAlloc(count={self.count})"
+  def generate(self):
+    return self.count << 8 | 0x90
+
 def parseLoc(val):
   if val[0] != '@':
     raise Exception("location has to start with @ got: "+val)
@@ -466,6 +474,11 @@ def parseLine(line):
     loc2 = parseLoc(args[1])
     return [OpSwap(loc1, loc2)]
   ## TODO: remaining stack modifications
+  elif op_code == "alloc" or op_code == "dealloc":
+    count = parseInt(args[0])
+    if op_code[0] == "d":
+      count = -count
+    return [OpAlloc(count)]
   raise Exception("unknown op_code: "+op_code)
 
 def parse(code):
