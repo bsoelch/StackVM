@@ -47,7 +47,7 @@ def loadBaseId(name,is_store):
 LOAD2_FLAG = 0x8
 def addrBaseId(name):
   return {"bp":0x0c,"ip":0x0d,"ro_data":0x0e,"rw_data":0x0f}[name]
-def valTypeBits(val_type):
+def valTypeBytes(val_type):
   return {"i8":1,"i16":2,"f16":2,"i32":4,"f32":4,"i64":8,"f64":8}[val_type]
 def syscallId(name):
   return ["exit","read","write","open","close"].index(name)
@@ -487,7 +487,7 @@ class OpData:
   def codeSize(self,labels,ip):
     return (self.byteSize(labels)+3)//4
   def byteSize(self,labels):
-    return len(self.data)*valTypeBits(self.val_type)
+    return len(self.data)*valTypeBytes(self.val_type)
   def replaceLabels(self,labels,new_ops):
     if not self.has_label_arg:
       new_ops.append(self)
@@ -508,6 +508,27 @@ class OpData:
       new_data.append(RelativeAddress(label_base,label_offset))
       has_relative_arg = True
     new_ops.append(OpData(self.val_type,new_data,has_relative_arg=has_relative_arg))
+
+
+class OpReserve:
+  def __init__(self,val_type,count,*,implicit=True):
+    self.val_type = val_type
+    self.count = count
+    self.implicit = implicit
+  def __repr__(self):
+    return f"OpReserve(val_type={self.val_type},count={self.count})"
+  def generate(self,prog):
+    if self.implicit: return
+    if proc.section == "code":
+      prog.appendU32s([0]*self.codeSize(0,0))
+      return
+    prog.appendBytes([0]*self.byteSize(0))
+  def codeSize(self,_labels,_ip):
+    return (self.byteSize(_labels)+3)//4
+  def byteSize(self,_labels):
+    return self.count*valTypeBytes(self.val_type)
+  def replaceLabels(self,labels,new_ops):
+    new_ops.append(self)
 
 class OpAlign:
   def __init__(self,byte_alignment):
@@ -917,6 +938,10 @@ class SourceFile:
       has_relative_arg = any(type(arg) == RelativeAddress for arg in args)
       self.has_label |= has_label_arg
       self.appendOp(OpData(val_type, args, has_label = has_label_arg,has_relative_arg = has_relative_arg))
+    elif op_code.startswith("reserve."):
+      val_type = op_code[len("reserve."):]
+      count = parseInt(args[0])
+      self.appendOp(OpReserve(val_type, count))
     elif op_code == "!align":
       alignment = parseInt(args[0])
       if (alignment & -alignment) != alignment:
@@ -948,6 +973,19 @@ def parseFile(srcFile="src.txt"):
   print(*src.ro_data,sep='\n')
   print("-----------------")
   print(*src.rw_data,sep='\n')
+  # mark reserve at end of rw_data as non-generating
+  i = len(src.rw_data)
+  has_implicit_data = False
+  while i > 0:
+    i -= 1
+    if type(src.rw_data[i]) == OpReserve:
+      src.rw_data[i].implicit = True
+      has_implicit_data = True
+    elif type(src.rw_data[i]) == OpLabel:
+      continue
+    elif type(src.rw_data[i]) == OpAlign:
+      continue
+    break
   if src.has_label:
     labels = {}
     ## compute addresses of data
@@ -975,6 +1013,7 @@ def parseFile(srcFile="src.txt"):
         continue
       op.byte_size = op.byteSize(labels)
       offset += op.byte_size
+    src.rw_size = offset
     ## compute addresses of operations, retry if labels change size
     first = True
     change = False
@@ -1016,6 +1055,17 @@ def parseFile(srcFile="src.txt"):
     print(*src.ro_data,sep='\n')
     print("-----------------")
     print(*src.rw_data,sep='\n')
+  elif has_implicit_data:
+    for op in src.rw_data:
+      if type(op) == OpAlign:
+        if op.byte_alignment > 1:
+          offset = (offset + (op.byte_alignment-1)) & (-op.byte_alignment)
+        continue
+      op.byte_size = op.byteSize(labels)
+      offset += op.byte_size
+    src.rw_size = offset
+  else:
+    src.rw_size = len(src.rw_data)
   prog = Program()
   for op in src.code:
     op.generate(prog)
@@ -1025,6 +1075,7 @@ def parseFile(srcFile="src.txt"):
   prog.section = "rw_data"
   for op in src.rw_data:
     op.generate(prog)
+  prog.rw_size = src.rw_size
   return prog
 
 def writeU32(f,val):
@@ -1052,7 +1103,7 @@ def generate(out="in.cctbc"):
         writeU64(f,prog.ro_addr) ## ro-data-addr
         writeU64(f,(len(prog.ro_data)+7)//8) ## ro-data-size
         writeU64(f,prog.rw_addr) ## rw-data-addr
-        writeU64(f,(len(prog.rw_data)+7)//8) ## rw-data-addr
+        writeU64(f,((prog.rw_size)+7)//8) ## rw-data-size
         writeU64(f,prog.stack_pointer) ## sp
         writeU64(f,prog.stack_size) ## stack-size
         writeU32s(f,prog.code) ## code
