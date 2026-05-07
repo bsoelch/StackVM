@@ -53,6 +53,8 @@ def valTypeBits(val_type):
 class CodeOp:
   def codeSize(self,labels,ip):
     return 1
+  def replaceLabels(self,labels,new_ops):
+    new_ops.append(self)
 
 LOADI_BITS = 20
 class OpLoadi(CodeOp):
@@ -100,8 +102,9 @@ class OpLoadLabel(CodeOp):
   def __repr__(self):
     return f"OpLoadLabel(base={self.base},is_store={self.is_store},size={self.size},val={self.val},offset={self.offset})"
   def codeSize(self,labels,ip):
-    if self.base in labels:
-      label_base, label_offset = labels[self.base]
+    if self.base.name in labels:
+      label_base, label_offset = labels[self.base.name]
+      label_offset += self.base.offset
       if label_base == "code":
         offset = (self.offset + label_offset) - ip
         if offset.bit_length() < LOAD_REL_OFFSET_BITS:
@@ -119,6 +122,29 @@ class OpLoadLabel(CodeOp):
           return 2 ## loadi load
         return 3
     return
+  def replaceLabels(self,labels,new_ops):
+    label_base, label_offset = labels[self.base.name]
+    label_offset += self.base.offset
+    if self.base.base != None: raise Exception("label difference is not supported")
+    if self.is_store and label_base in ["code","ro_data"]: raise Exception(f"cannot write to {label_base} address")
+    if label_base == "code":
+      offset = (self.offset + label_offset) - ip
+      if offset.bit_length() < LOAD_REL_OFFSET_BITS:
+        new_ops.append(OpLoadRelative("code",self.is_store,self.size,self.val,offset))
+      elif offset.bit_length() < LOAD_REL_OFFSET_BITS + LOADI_BITS:
+        raise Exception("unimplemented: composite operations")
+      else:
+        raise Exception("unimplemented: composite operations")
+    else:
+      offset = self.offset + label_offset
+      if offset < 0:
+        raise Exception("unimplemented: composite operations") ## addr subi load
+      elif offset.bit_length() <= LOAD_REL_OFFSET_BITS:
+        new_ops.append(OpLoadRelative(label_base,self.is_store,self.size,self.val,offset))
+      elif offset.bit_length() <= LOAD_REL_OFFSET_BITS + LOADI_BITS:
+        raise Exception("unimplemented: composite operations")
+      else:
+        raise Exception("unimplemented: composite operations")
 
 class OpLoad2(CodeOp):
   def __init__(self,is_store,val1,val2,src,offset):
@@ -157,6 +183,7 @@ class OpLoad2Label(CodeOp):
   def codeSize(self,labels,ip):
     if self.base.name in labels:
       label_base, label_offset = labels[self.base.name]
+      label_offset += self.base.offset
       ## TODO: handle label-expressions
       if label_base == "code":
         offset = (self.offset + label_offset) - ip
@@ -175,6 +202,29 @@ class OpLoad2Label(CodeOp):
           return 2 ## loadi load
         return 3
     return 1
+  def replaceLabels(self,labels,new_ops):
+    if self.base.base != None: raise Exception("label difference is not supported")
+    label_base, label_offset = labels[self.base.name]
+    if self.is_store and label_base in ["code","ro_data"]: raise Exception(f"cannot write to {label_base} address")
+    label_offset += self.base.offset
+    if label_base == "code":
+      offset = (self.offset + label_offset) - ip
+      if offset.bit_length() < LOAD2_REL_OFFSET_BITS:
+        new_ops.append(OpLoad2Relative(label_base,self.is_store,self.val1,self.val2,offset)) ## fits in offset
+      elif offset.bit_length() < LOAD2_REL_OFFSET_BITS + LOADI_BITS:
+        raise Exception("unimplemented: composite operations") ## loadi load
+      else:
+        raise Exception("unimplemented: composite operations")
+    else:
+      offset = self.offset + label_offset
+      if offset < 0:
+        raise Exception("unimplemented: composite operations") ## addr subi load
+      elif offset.bit_length() <= LOAD2_REL_OFFSET_BITS:
+        new_ops.append(OpLoad2Relative(label_base,self.is_store,self.val1,self.val2,offset)) ## fits in offset
+      elif offset.bit_length() <= LOAD2_REL_OFFSET_BITS + LOADI_BITS:
+        raise Exception("unimplemented: composite operations") ## loadi load
+      else:
+        raise Exception("unimplemented: composite operations")
 
 class OpAddr(CodeOp):
   def __init__(self,base,dst,offset):
@@ -333,32 +383,70 @@ class OpLabel:
     return 0
   def byteSize(self,labels):
     return 0
+  def replaceLabels(self,labels,new_ops):
+    pass
 
 class OpData:
-  def __init__(self,val_type,data,*,has_label):
+  def __init__(self,val_type,data,*,has_label=False,has_relative_arg=False):
     self.val_type = val_type
     self.has_label_arg = has_label
+    self.has_relative_arg = has_relative_arg
     self.data = data
   def __repr__(self):
     return f"OpData(val_type={self.val_type},data={self.data})"
   def generate(self,prog):
+    data = self.data
+    if self.has_relative_arg:
+      data = []
+      for val in self.data:
+        if type(val) == RelativeAddress:
+          if val.base == "code":
+            data.append(prog.code_addr+val.offset)
+          elif val.base == "ro_data":
+            data.append(prog.ro_addr+val.offset)
+          elif val.base == "rw_data":
+            data.append(prog.rw_addr+val.offset)
+          else:
+            raise Exception("unsupported data offset: "+val.base)
+        else:
+          data.append(val)
     if self.val_type == "i8":
-      prog.appendBytes(self.data)
+      prog.appendBytes(data)
       return
     if self.val_type == "i64":
-      prog.appendU64s(self.data)
+      prog.appendU64s(data)
       return
     if self.val_type == "i32":
-      prog.appendU32s(self.data)
+      prog.appendU32s(data)
       return
     if self.val_type == "i16":
-      prog.appendU16s(self.data)
+      prog.appendU16s(data)
       return
     raise Exception(f"encoding {self.val_type} data is not yet supported")
   def codeSize(self,labels,ip):
     return (self.byteSize(labels)+3)//4
   def byteSize(self,labels):
     return len(self.data)*valTypeBits(self.val_type)
+  def replaceLabels(self,labels,new_ops):
+    if not self.has_label_arg:
+      new_ops.append(self)
+      return
+    new_data = []
+    has_relative_arg = False
+    for val in self.data:
+      if type(val) != Label:
+        new_data.append(val)
+        continue
+      label_base, label_offset = labels[val.name]
+      if val.base != None:
+        val_base, val_offset = labels[val.base]
+        if label_base == val_base:
+          new_data.append(label_offset-val_offset)
+          continue
+        raise Exception("difference between labels in different sections is not supported")
+      new_data.append(RelativeAddress(label_base,label_offset))
+      has_relative_arg = True
+    new_ops.append(OpData(self.val_type,new_data,has_relative_arg=has_relative_arg))
 
 class OpAlign:
   def __init__(self,byte_alignment):
@@ -367,6 +455,8 @@ class OpAlign:
     return f"OpAlign(byte_alignment={self.byte_alignment})"
   def generate(self,prog):
     prog.align(self.byte_alignment)
+  def replaceLabels(self,labels,new_ops):
+    new_ops.append(self)
 
 class OpStart:
   def __init__(self):
@@ -374,15 +464,22 @@ class OpStart:
   def __repr__(self):
     return f"OpStart()"
   def generate(self,prog):
-    prog.start = len(prog.code)
+    prog.start = prog.code_addr + len(prog.code)
+  def replaceLabels(self,labels,new_ops):
+    new_ops.append(self)
 
 class Program:
   def __init__(self):
     self.code = []
-    self.start = 0
+    self.code_addr = 0
+    self.start = self.code_addr
     self.ro_data = []
+    self.ro_addr = 0x1_0000_0000_0000
     self.rw_data = []
+    self.rw_addr = 0x2_0000_0000_0000
     self.section = "code"
+    self.stack_pointer = 0x1_0000_0000
+    self.stack_size = 0x10_0000
   def appendU32(self,val):
     if self.section == "code":
       self.code.append(val)
@@ -396,9 +493,9 @@ class Program:
     else:
       for val in vals:self.appendU32(val)
   def appendU64s(self,vals):
-    self.appendBytes((b for val in vals for b in val.to_bytes(8, byteorder="little", signed=False)))
+    self.appendBytes(list(b for val in vals for b in val.to_bytes(8, byteorder="little", signed=False)))
   def appendU16s(self,vals):
-    self.appendBytes((b for val in vals for b in val.to_bytes(2, byteorder="little", signed=False)))
+    self.appendBytes(list(b for val in vals for b in val.to_bytes(2, byteorder="little", signed=False)))
   def appendBytes(self,vals):
     if self.section == "code":
       self.code.extend([int.from_bytes(vals[4*i:4*i+4],byteorder="little",signed=False)for i in range((len(vals)+3)//4)])
@@ -411,11 +508,14 @@ class Program:
     if self.section == "code":
       if byte_alignment < 4: return
       byte_alignment//=4
+      if ((self.code_addr+len(self.code)) % byte_alignment == 0): return
       self.code.extend([0]*(byte_alignment-len(self.code)%byte_alignment))
     elif self.section == "ro_data":
-      self.ro_data.extend([0]*(byte_alignment-len(self.ro_data)%byte_alignment))
+      if ((self.ro_addr+len(self.ro_data)) % byte_alignment == 0): return
+      self.ro_data.extend([0]*(byte_alignment-(len(self.ro_data)+self.ro_addr)%byte_alignment))
     elif self.section == "rw_data":
-      self.rw_data.extend([0]*(byte_alignment-len(self.rw_data)%byte_alignment))
+      if ((self.rw_addr+len(self.rw_data)) % byte_alignment == 0): return
+      self.rw_data.extend([0]*(byte_alignment-(len(self.rw_data)+self.rw_addr)%byte_alignment))
 
 def parseLoc(val):
   if val[0] != '@':
@@ -474,12 +574,23 @@ def parseAddress(val):
     if len(val) == 3: return RelativeAddress("bp",0)
     if val[3] not in "+-":raise Exception("offset has to start with + or -: "+val)
     return RelativeAddress("bp",int(val[3:]))
+  ## TODO is there a good way to avoid the duplication with parseAbsoluteAddress
+  if val.startswith("@ro_data"):
+    if len(val) == 8: return RelativeAddress("ro_data",0)
+    if val[8] not in "+-":raise Exception("offset has to start with + or -: "+val)
+    return RelativeAddress("ro_data",int(val[8:]))
+  if val.startswith("@rw_data"):
+    if len(val) == 8: return RelativeAddress("rw_data",0)
+    if val[8] not in "+-":raise Exception("offset has to start with + or -: "+val)
+    return RelativeAddress("rw_data",int(val[8:]))
   if val[0] == '@':
     if "+" in val:
       base,offset = val.split("+")
       return RelativeAddress(StackLocation(int(base[1:])),int(offset))
     return parseLoc(val)
-  return parseAbsoluteAddress(val)
+  if val[0] == ':':
+    return parseLabel(val)
+  return parseInt(val)
 
 def parseData(val,val_type):
   if val[0] == '"':
@@ -559,7 +670,7 @@ class SourceFile:
       self.rw_data.append(value)
     else:
       raise Exception("unsupported section: "+self.section)
-    
+
   def parseLine(self,line):
     line = line.strip()
     hash_pos = line.find('#')
@@ -593,7 +704,7 @@ class SourceFile:
       if size not in [1,2,4,8]:
         raise Exception(f"size has to be one of 1,2,4,8 got: {size}")
       dst = parseLoc(args[0])
-      addr = parseArg(args[1])
+      addr = parseAddress(args[1])
       ## TODO: check offset range
       if type(addr) == StackLocation:
         self.appendOp(OpLoad(is_store,size,dst,addr,0))
@@ -611,7 +722,7 @@ class SourceFile:
       is_store = (op_code[0] == 's')
       dst1 = parseLoc(args[0])
       dst2 = parseLoc(args[1])
-      addr = parseArg(args[2])
+      addr = parseAddress(args[2])
       if type(addr) == StackLocation:
         self.appendOp(OpLoad2(is_store,dst1,dst2,addr,0))
       elif type(addr) == RelativeAddress and type(addr.base) == StackLocation:
@@ -626,7 +737,7 @@ class SourceFile:
         raise Exception(f"load2/store2 is not implemented: {dst1} {dst2} {addr}")
     elif op_code == "addr":
       dst = parseLoc(args[0])
-      addr = parseArg(args[1])
+      addr = parseAddress(args[1])
       if type(addr) == RelativeAddress and type(addr.base) != StackLocation:
         self.appendOp(OpAddr(addr.base,dst,addr.offset))
       else:
@@ -686,7 +797,8 @@ class SourceFile:
           self.appendOp(OpShiftImm(base_op,dst,src1,src2, val_type = val_type))
         else:
           raise Exception("unsupported operation for immediate: "+base_op)
-      self.appendOp(OpBinary(base_op,dst,src1,src2, cmp_type = cmp_type,val_type = val_type))
+      else:
+        self.appendOp(OpBinary(base_op,dst,src1,src2, cmp_type = cmp_type,val_type = val_type))
     elif op_code.startswith("neg.") or op_code.startswith("not."):
       base_op, val_type = op_code.split('.')
       val_type = parseValType(val_type)
@@ -701,7 +813,7 @@ class SourceFile:
       dst = parseLoc(args[0])
       src = parseLoc(args[1])
       self.appendOp(OpCvt(dst, src,src_type = src_type,signed = signed,dst_type = dst_type))
-    ## TODO? seperate op-code for long-jump/long-call `ljmp`(?)
+    ## TODO? separate op-code for long-jump/long-call `ljmp`(?)
     elif op_code == "jmp" or op_code == "call" or op_code == "jmp.abs" or op_code == "call.abs":
       target = parseArg(args[0]) # TODO check target range
       self.appendOp(OpJmp(op_code, target))
@@ -737,8 +849,9 @@ class SourceFile:
       val_type = op_code[len("data."):]
       args = [elt for arg in args for elt in parseData(arg,val_type)]
       has_label_arg = any(type(arg) == Label for arg in args)
+      has_relative_arg = any(type(arg) == RelativeAddress for arg in args)
       self.has_label |= has_label_arg
-      self.appendOp(OpData(val_type, args, has_label = has_label_arg))
+      self.appendOp(OpData(val_type, args, has_label = has_label_arg,has_relative_arg = has_relative_arg))
     elif op_code == "!align":
       alignment = parseInt(args[0])
       if (alignment & -alignment) != alignment:
@@ -824,16 +937,31 @@ def parseFile(srcFile="src.txt"):
         op.size = op_size
         offset += op_size
       first = False
-    print(labels)
+    new_code = []
     for op in src.code:
-      print(op.offset,op.size,op)
-    ## TODO replace labels with their integer values
-    raise Exception("label-resolving is not yet implemented")
+      op.replaceLabels(labels,new_code)
+    src.code = new_code
+    new_data = []
+    for op in src.ro_data:
+      op.replaceLabels(labels,new_data)
+    src.ro_data = new_data
+    new_data = []
+    for op in src.rw_data:
+      op.replaceLabels(labels,new_data)
+    src.rw_data = new_data
+    print("-----------------------")
+    print(*src.code,sep='\n')
+    print("-----------------")
+    print(*src.ro_data,sep='\n')
+    print("-----------------")
+    print(*src.rw_data,sep='\n')
   prog = Program()
   for op in src.code:
     op.generate(prog)
+  prog.section = "ro_data"
   for op in src.ro_data:
     op.generate(prog)
+  prog.section = "rw_data"
   for op in src.rw_data:
     op.generate(prog)
   return prog
@@ -855,20 +983,17 @@ def generate(out="in.cctbc"):
     print([hex(op)for op in prog.code])
     ## file-format
     ## [version][ip][code-addr][code-size][ro-addr][ro-data-size][rw-addr][rw-data-size][sp][stack-size]
-    stack_pointer = 0x1_0000_0000
-    stack_size = 0x10_0000
-    code_offset = 0
     with open(out,mode="wb") as f:
         writeU64(f,0) ## reserved
-        writeU64(f,prog.start+code_offset)
-        writeU64(f,code_offset) ## code-addr
+        writeU64(f,prog.start)
+        writeU64(f,prog.code_addr) ## code-addr
         writeU64(f,(len(prog.code)+1)//2)
-        writeU64(f,0x1_0000_0000_0000) ## ro-data-addr
+        writeU64(f,prog.ro_addr) ## ro-data-addr
         writeU64(f,(len(prog.ro_data)+7)//8) ## ro-data-size
-        writeU64(f,0x2_0000_0000_0000) ## rw-data-addr
+        writeU64(f,prog.rw_addr) ## rw-data-addr
         writeU64(f,(len(prog.rw_data)+7)//8) ## rw-data-addr
-        writeU64(f,stack_pointer) ## sp
-        writeU64(f,stack_size) ## stack-size
+        writeU64(f,prog.stack_pointer) ## sp
+        writeU64(f,prog.stack_size) ## stack-size
         writeU32s(f,prog.code) ## code
         if len(prog.code) & 1: ## padding
           writeU32(f,0)

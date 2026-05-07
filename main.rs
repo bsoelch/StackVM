@@ -511,10 +511,10 @@ fn run(program: &mut Program) {
           let size = 1 << (op_data&0x3) as usize; // 1,2,4,8
           let offset = (op_data >> 2) as u64;
           let addr = rbp + offset;
+          if TRACE {println!("load.{} @{} @bp+{}",size,dst,offset);}
           let mut buf: [u64;1] = [0;1];
           read_data(&program.allocations,addr,&mut u64_as_bytes_mut(&mut buf)[0..size]);
           stack_set(buf[0],&mut val_stack,dst);
-          if TRACE {println!("load.{} @{} @bp+{}",size,dst,offset);}
         }
         0x13 => { // store.local [src:4][size:2][offset:18u]
           let src = (op_data & 0xf) as usize + 1;
@@ -524,8 +524,8 @@ fn run(program: &mut Program) {
           let addr = rbp + offset;
           let src_val = stack_get(&val_stack,src);
           let src_vals: [u64;1] = [src_val;1];
-          write_data(&mut program.allocations,addr,&u64_as_bytes(&src_vals)[0..size]);
           if TRACE {println!("store.{} @{} @bp+{}",size,src,offset);}
+          write_data(&mut program.allocations,addr,&u64_as_bytes(&src_vals)[0..size]);
         }
         0x14 => { // load.ip [dst:4][size:2][offset:18s]
           let dst = (op_data & 0xf) as usize;
@@ -534,11 +534,11 @@ fn run(program: &mut Program) {
           let offset = (op_data >> 2) as i64;
           let addr = ((ip as i64) * 4 + offset) as usize;
           let mut buf: [u64;1] = [0;1];
+          if TRACE {println!("load.{} @{} @ip{}{}",size,dst,if offset >= 0 {"+"}else{""},offset);}
           // TODO? will this lead to problems with aliasing
           u64_as_bytes_mut(&mut buf).copy_from_slice(&u32_as_bytes(&program.code)[addr..(addr+8)]);
           // read_data(&program.allocations,addr,&mut u64_as_bytes_mut(&mut buf)[0..size]);
           stack_set(buf[0],&mut val_stack,dst);
-          if TRACE {println!("load.{} @{} @ip{}{}",size,dst,if offset >= 0 {"+"}else{""},offset);}
         }
         0x15 => { // load.ro [dst:4][size:2][offset:18u]
           let dst = (op_data & 0xf) as usize;
@@ -546,10 +546,10 @@ fn run(program: &mut Program) {
           let size = 1 << (op_data&0x3) as usize; // 1,2,4,8
           let offset = (op_data >> 2) as u64;
           let addr = program.ro_addr + offset;
+          if TRACE {println!("load.{} @{} @ro_data+{}",size,dst,offset);}
           let mut buf: [u64;1] = [0;1];
           read_data(&program.allocations,addr,&mut u64_as_bytes_mut(&mut buf)[0..size]);
           stack_set(buf[0],&mut val_stack,dst);
-          if TRACE {println!("load.{} @{} @ro_data+{}",size,dst,offset);}
         }
         0x16 => { // load.rw [dst:4][size:2][offset:18u]
           let dst = (op_data & 0xf) as usize;
@@ -557,10 +557,10 @@ fn run(program: &mut Program) {
           let size = 1 << (op_data&0x3) as usize; // 1,2,4,8
           let offset = (op_data >> 2) as u64;
           let addr = program.rw_addr + offset;
+          if TRACE {println!("load.{} @{} @rw_data+{}",size,dst,offset);}
           let mut buf: [u64;1] = [0;1];
           read_data(&program.allocations,addr,&mut u64_as_bytes_mut(&mut buf)[0..size]);
           stack_set(buf[0],&mut val_stack,dst);
-          if TRACE {println!("load.{} @{} @rw_data+{}",size,dst,offset);}
         }
         0x17 => { // store.rw [src:4][size:2][offset:18u]
           let src = (op_data & 0xf) as usize + 1;
@@ -569,9 +569,9 @@ fn run(program: &mut Program) {
           let offset = (op_data >> 2) as u64;
           let addr = program.rw_addr + offset;
           let src_val = stack_get(&val_stack,src);
+          if TRACE {println!("store.{} @{} @rw_data+{}",size,src,offset);}
           let src_vals: [u64;1] = [src_val;1];
           write_data(&mut program.allocations,addr,&u64_as_bytes(&src_vals)[0..size]);
-          if TRACE {println!("store.{} @{} @rw_data+{}",size,src,offset);}
         }
         0x18|0x19 => { // load2/store2 [dst1:4][dst2:4][ptr:4][offset:12u]
           let is_store = op_type == 0x13;
@@ -609,10 +609,10 @@ fn run(program: &mut Program) {
           let offset = (op_data >> 4) as u64;
           let addr = rbp + offset;
           let mut buf: [u64;2] = [0;2];
+          if TRACE {println!("load2 @{} @{} @bp+{}",dst1,dst2,op_data);}
           read_data(&program.allocations,addr,u64_as_bytes_mut(&mut buf));
           stack_set(buf[0],&mut val_stack,dst1);
           stack_set(buf[1],&mut val_stack,dst2);
-          if TRACE {println!("load2 @{} @{} @bp+{}",dst1,dst2,op_data);}
         }
         0x1b => { // store2.local [src1:4][src2:4][offset:16u]
           let src1 = (op_data & 0xf) as usize + 1;
@@ -623,8 +623,8 @@ fn run(program: &mut Program) {
           let src1_val = stack_get(&val_stack,src1);
           let src2_val = stack_get(&val_stack,src2);
           let src_vals: [u64;2] = [src1_val,src2_val];
-          write_data(&mut program.allocations,addr,u64_as_bytes(&src_vals));
           if TRACE {println!("store2 @{} @{} @bp+{}",src1,src2,op_data);}
+          write_data(&mut program.allocations,addr,u64_as_bytes(&src_vals));
         }
         0x1c => { // load2.ip [dst1:4][dst2:4][offset:16s]
           let dst1 = (op_data & 0xf) as usize;
@@ -632,12 +632,12 @@ fn run(program: &mut Program) {
           let dst2 = (op_data & 0xf) as usize;
           let offset = (op_data >> 4) as i64;
           let addr = ((ip as i64) * 4 + offset) as usize;
+          if TRACE {println!("load2 @{} @{} @ip{}{}",dst1,dst2,if op_data >= 0 {"+"}else{""},offset);}
           let mut buf: [u64;2] = [0;2];
           u64_as_bytes_mut(&mut buf).copy_from_slice(&u32_as_bytes(&program.code)[addr..(addr+16)]);
           // read_data(&program.allocations,addr,&mut u64_as_bytes_mut(&mut buf)[0..size]);
           stack_set(buf[0],&mut val_stack,dst1);
           stack_set(buf[1],&mut val_stack,dst2);
-          if TRACE {println!("load2 @{} @{} @ip{}{}",dst1,dst2,if op_data >= 0 {"+"}else{""},offset);}
         }
         0x1d => { // load2.ro [dst1:4][dst2:4][offset:16u]
           let dst1 = (op_data & 0xf) as usize;
@@ -645,11 +645,11 @@ fn run(program: &mut Program) {
           let dst2 = (op_data & 0xf) as usize ;
           let offset = (op_data >> 4) as u64;
           let addr = program.ro_addr + offset;
+          if TRACE {println!("load2 @{} @{} @ro_data+{}",dst1,dst2,op_data);}
           let mut buf: [u64;2] = [0;2];
           read_data(&program.allocations,addr,u64_as_bytes_mut(&mut buf));
           stack_set(buf[0],&mut val_stack,dst1);
           stack_set(buf[1],&mut val_stack,dst2);
-          if TRACE {println!("load2 @{} @{} @ro_data+{}",dst1,dst2,op_data);}
         }
         0x1e => { // load2.rw [dst1:4][dst2:4][offset:16u]
           let dst1 = (op_data & 0xf) as usize;
@@ -657,11 +657,11 @@ fn run(program: &mut Program) {
           let dst2 = (op_data & 0xf) as usize;
           let offset = (op_data >> 4) as u64;
           let addr = program.rw_addr + offset;
+          if TRACE {println!("load2 @{} @{} @rw_data+{}",dst1,dst2,op_data);}
           let mut buf: [u64;2] = [0;2];
           read_data(&program.allocations,addr,u64_as_bytes_mut(&mut buf));
           stack_set(buf[0],&mut val_stack,dst1);
           stack_set(buf[1],&mut val_stack,dst2);
-          if TRACE {println!("load2 @{} @{} @rw_data+{}",dst1,dst2,op_data);}
         }
         0x1f => { // store2.rw [src1:4][src2:4][offset:16u]
           let src1 = (op_data & 0xf) as usize + 1;
@@ -672,8 +672,8 @@ fn run(program: &mut Program) {
           let src1_val = stack_get(&val_stack,src1);
           let src2_val = stack_get(&val_stack,src2);
           let src_vals: [u64;2] = [src1_val,src2_val];
-          write_data(&mut program.allocations,addr,u64_as_bytes(&src_vals));
           if TRACE {println!("store2 @{} @{} @rw_data+{}",src1,src2,op_data);}
+          write_data(&mut program.allocations,addr,u64_as_bytes(&src_vals));
         }
         0x20..=0x2f => { // jump/call[offset:24s], ret, jz/jnz [src:4][offset:20s]
           const JUMP_TYPE_JMP_ABS: u32 = 0;
