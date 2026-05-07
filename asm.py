@@ -49,6 +49,8 @@ def addrBaseId(name):
   return {"bp":0x0c,"ip":0x0d,"ro_data":0x0e,"rw_data":0x0f}[name]
 def valTypeBits(val_type):
   return {"i8":1,"i16":2,"f16":2,"i32":4,"f32":4,"i64":8,"f64":8}[val_type]
+def syscallId(name):
+  return ["exit","read","write","open","close"].index(name);
 
 class CodeOp:
   def codeSize(self,labels,ip):
@@ -371,6 +373,14 @@ class OpAlloc(CodeOp):
     return f"OpAlloc(count={self.count})"
   def generate(self,prog):
     prog.appendU32(self.count << 8 | 0x90)
+
+class OpSyscall(CodeOp):
+  def __init__(self,name):
+    self.name = name
+  def __repr__(self):
+    return f"OpSyscall(name={self.name})"
+  def generate(self,prog):
+    prog.appendU32(syscallId(self.name) << 8 | 0xff)
 
 class OpLabel:
   def __init__(self,name):
@@ -845,6 +855,8 @@ class SourceFile:
       if op_code[0] == "d":
         count = -count
       self.appendOp(OpAlloc(count))
+    elif op_code.startswith("syscall."):
+      self.appendOp(OpSyscall(op_code[len("syscall."):]))
     elif op_code.startswith("data."):
       val_type = op_code[len("data."):]
       args = [elt for arg in args for elt in parseData(arg,val_type)]

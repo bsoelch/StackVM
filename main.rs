@@ -2,6 +2,8 @@ use std::fs::File;
 use std::io::Read;
 use std::io;
 use std::ptr;
+use std::process;
+use std::io::Write;
 
 fn u64_as_bytes_mut(ints: &mut [u64]) -> &mut[u8] {
   unsafe {
@@ -1200,6 +1202,28 @@ fn run(program: &mut Program) {
           } else {
             if TRACE {println!("dealloc ${}",-count);}
             rbp = (rbp as i64 - (count-7)&-8) as u64;
+          }
+        }
+        0xff => { // syscall [call-id:24u]
+          match op_data {
+            0 => { // exit
+              let res = val_stack.pop().unwrap();
+              if TRACE {println!("syscall.exit");}
+              process::exit(res as i32)
+            }
+            // 1 -> read
+            2 => { // write
+              let fd = val_stack.pop().unwrap();
+              let count = val_stack.pop().unwrap();
+              let ptr = val_stack.pop().unwrap();
+              if TRACE {println!("syscall.write");}
+              if fd != 1 {panic!("currently only write to stdout is supported")}
+              let mut buf: Box<[u8]> = unsafe{ Box::<[u8]>::new_uninit_slice(count as usize).assume_init() };
+              read_data(&program.allocations,ptr,&mut buf);
+              let res = io::stdout().write_all(&buf);
+              val_stack.push(if res.is_ok() {0} else {1});
+            }
+            _ => panic!("unknown syscall-id {}",op_data),
           }
         }
         _ => panic!("unknown op-code 0x{:x}",op_type),
