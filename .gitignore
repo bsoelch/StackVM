@@ -7,5 +7,6 @@ main
 *.ll
 *.zip
 *.cctbc
+.DS_Store
 src.txt
 tmp/*
