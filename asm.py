@@ -397,6 +397,14 @@ class OpRet(CodeOp):
   def generate(self,prog):
     prog.appendU32(0xffffff23)
 
+class OpDrop(CodeOp):
+  def __init__(self,drop_count):
+    self.drop_count = drop_count
+  def __repr__(self):
+    return f"OpDrop(drop_count={self.drop_count})"
+  def generate(self,prog):
+    prog.appendU32((self.drop_count << 8) | 0x80)
+
 # TODO: support variants copyFrom/To, deepSwap
 class OpCopy(CodeOp):
   def __init__(self,dst,src,*,drop_count):
@@ -408,6 +416,19 @@ class OpCopy(CodeOp):
   def generate(self,prog):
     prog.appendU32(((self.src.index-1)&0xf) << 22 | (self.dst.index&0xf) << 12 | (self.drop_count << 8) | 0x89)
 
+class OpCopy3(CodeOp):
+  def __init__(self,dst1,dst2,dst3,src1,src2,src3):
+    self.dst1 = expectStackLocation(dst1,0,1023)
+    self.dst2 = expectStackLocation(dst2,0,1023)
+    self.dst3 = expectStackLocation(dst3,0,1023)
+    self.src1 = expectStackLocation(src1,1,1024)
+    self.src2 = expectStackLocation(src2,1,1024)
+    self.src3 = expectStackLocation(src3,1,1024)
+  def __repr__(self):
+    return f"OpCopy3(dst1={self.dst1},dst2={self.dst2},dst3={self.dst3},src1={self.src1},src2={self.src2},src3={self.src3})"
+  def generate(self,prog):
+    prog.appendU32(((self.src3.index-1)&0xf) << 28 | ((self.src2.index-1)&0xf) << 24 | ((self.src1.index-1)&0xf) << 20 | (self.dst3.index&0xf) << 16 | (self.dst2.index&0xf) << 12 | (self.dst1.index&0xf) << 8 | 0x8b)
+
 class OpSwap(CodeOp):
   def __init__(self,loc1,loc2):
     self.loc1 = expectStackLocation(loc1,1,4096)
@@ -416,6 +437,24 @@ class OpSwap(CodeOp):
     return f"OpSwap(loc1={self.loc1},loc2={self.loc2})"
   def generate(self,prog):
     prog.appendU32(((self.loc2.index-1)&0xf) << 20 | ((self.loc1.index-1)&0xf) << 8 | 0x8c)
+
+class OpInsert(CodeOp):
+  def __init__(self,dst,src):
+    self.dst = expectStackLocation(loc1,0,(1<<20)-1)
+    self.src = expectStackLocation(loc2,1,16)
+  def __repr__(self):
+    return f"OpInsert(dst={self.dst},src={self.src})"
+  def generate(self,prog):
+    prog.appendU32(self.dst.index << 12 | ((self.src.index-1)&0xf) << 8 | 0x84)
+
+class OpExtract(CodeOp):
+  def __init__(self,dst,src):
+    self.dst = expectStackLocation(dst,0,15)
+    self.src = expectStackLocation(src,1,(1<<20))
+  def __repr__(self):
+    return f"OpExtract(dst={self.dst},src={self.src})"
+  def generate(self,prog):
+    prog.appendU32((self.src.index-1) << 12 | ((self.dst.index)&0xf) << 8 | 0x85)
 
 class OpAlloc(CodeOp):
   def __init__(self,count):
@@ -910,19 +949,38 @@ class SourceFile:
       else:
         arg = parseLoc(args[0])
         self.appendOp(OpJmpIf(op_code, arg, target))
+    elif op_code == "drop":
+      count = parseInt(args[0])
+      self.appendOp(OpDrop(count))
     elif op_code == "copy":
-      loc1 = parseLoc(args[0])
-      loc2 = parseLoc(args[1])
-      self.appendOp(OpCopy(loc1, loc2, drop_count = 0))
+      dst = parseLoc(args[0])
+      src = parseLoc(args[1])
+      self.appendOp(OpCopy(dst, src, drop_count = 0))
     elif op_code.startswith("copy.drop"):
       drop_count = int(op_code[len("copy.drop"):])
-      loc1 = parseLoc(args[0])
-      loc2 = parseLoc(args[1])
-      self.appendOp(OpCopy(loc1, loc2, drop_count = drop_count))
+      dst = parseLoc(args[0])
+      src = parseLoc(args[1])
+      self.appendOp(OpCopy(dst, src, drop_count = drop_count))
+    elif op_code == "copy3":
+      dst1 = parseLoc(args[0])
+      dst2 = parseLoc(args[1])
+      dst3 = parseLoc(args[2])
+      src1 = parseLoc(args[3])
+      src2 = parseLoc(args[4])
+      src3 = parseLoc(args[5])
+      self.appendOp(OpCopy3(dst1,dst2,dst3,src1,src2,src3))
     elif op_code == "swap":
       loc1 = parseLoc(args[0])
       loc2 = parseLoc(args[1])
       self.appendOp(OpSwap(loc1, loc2))
+    elif op_code == "insert":
+      dst = parseLoc(args[0])
+      src = parseLoc(args[1])
+      self.appendOp(OpInsert(dst, src))
+    elif op_code == "extract":
+      dst = parseLoc(args[0])
+      src = parseLoc(args[1])
+      self.appendOp(OpExtract(dst, src))
     ## TODO: remaining stack modifications
     elif op_code == "alloc" or op_code == "dealloc":
       count = parseInt(args[0])
