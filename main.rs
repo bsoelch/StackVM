@@ -4,6 +4,10 @@ use std::io;
 use std::ptr;
 use std::process;
 use std::io::Write;
+use std::collections::HashMap;
+use std::fs::OpenOptions;
+use std::os::unix::ffi::OsStrExt;
+use std::path::Path;
 
 fn u64_as_bytes_mut(ints: &mut [u64]) -> &mut[u8] {
   unsafe {
@@ -39,6 +43,31 @@ fn u32_as_bytes_mut(ints: &mut [u32]) -> &mut[u8] {
     let len = ints.len() * 4;
     std::slice::from_raw_parts_mut(ptr, len)
   }
+}
+
+enum FileLike {
+  File(File),
+  StdIn(io::Stdin),
+  StdOut(io::Stdout),
+  StdErr(io::Stderr),
+}
+impl FileLike {
+    fn read(&mut self,dst: &mut [u8]) -> Result<usize,std::io::Error> {
+        match self {
+          FileLike::File(f) => f.read(dst),
+          FileLike::StdIn(f) => f.read(dst),
+          FileLike::StdOut(_) => panic!("cannot read from stdout"),
+          FileLike::StdErr(_) => panic!("cannot read from stderr"),
+        }
+    }
+    fn write(&mut self,src: &[u8]) -> Result<usize,std::io::Error> {
+        match self {
+          FileLike::File(f) => f.write(src),
+          FileLike::StdIn(_) => panic!("cannot write to stdin"),
+          FileLike::StdOut(f) => f.write(src),
+          FileLike::StdErr(f) => f.write(src),
+        }
+    }
 }
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
@@ -156,6 +185,8 @@ struct Program{
   ro_addr: u64,
   rw_addr: u64,
   allocations: AllocationTree,
+  files: HashMap<u64,FileLike>,
+  next_fd: u64,
 }
 fn stack_get(stack: &[u64],index: usize) -> u64 {
   if index == 0 || stack.len() < index {
@@ -491,13 +522,13 @@ fn run(program: &mut Program) {
             buf[0] = stack_get(&val_stack,dst + 1);
           }
           let size = 1 << (op_data & 0x3) as usize; // 1,2,4,8
-          let op_data = op_data >> 2;
-          let addr = stack_get(&val_stack,ptr) + (op_data as u64);
+          let offset = op_data >> 2;
+          let addr = stack_get(&val_stack,ptr) + (offset as u64);
           if TRACE {
             if is_store {
-                println!("store.{} @{} @{}+{}",size,dst,ptr,op_data);
+                println!("store.{} @{} @{}+{}",size,dst,ptr,offset);
             } else {
-                println!("load.{} @{} @{}+{}",size,dst,ptr,op_data);
+                println!("load.{} @{} @{}+{}",size,dst,ptr,offset);
             }
           }
           if is_store {
@@ -583,17 +614,17 @@ fn run(program: &mut Program) {
           let op_data = op_data >> 4;
           let mut buf: [u64;2] = [0;2];
           let ptr = (op_data & 0xf) as usize + 1; // needed for tracing
-          let op_data = op_data >> 4;
+          let offset = op_data >> 4;
           if is_store {
             buf[0] = stack_get(&val_stack,dst1 + 1);
             buf[1] = stack_get(&val_stack,dst2 + 1);
           }
-          let addr = stack_get(&val_stack,ptr) + (op_data as u64);
+          let addr = stack_get(&val_stack,ptr) + (offset as u64);
           if TRACE {
             if is_store {
-                println!("store2 @{} @{} @{}+{}",dst1,dst2,ptr,op_data);
+                println!("store2 @{} @{} @{}+{}",dst1,dst2,ptr,offset);
             } else {
-                println!("load2 @{} @{} @{}+{}",dst1,dst2,ptr,op_data);
+                println!("load2 @{} @{} @{}+{}",dst1,dst2,ptr,offset);
             }
           }
           if is_store {
@@ -611,7 +642,7 @@ fn run(program: &mut Program) {
           let offset = (op_data >> 4) as u64;
           let addr = rbp + offset;
           let mut buf: [u64;2] = [0;2];
-          if TRACE {println!("load2 @{} @{} @bp+{}",dst1,dst2,op_data);}
+          if TRACE {println!("load2 @{} @{} @bp+{}",dst1,dst2,offset);}
           read_data(&program.allocations,addr,u64_as_bytes_mut(&mut buf));
           stack_set(buf[0],&mut val_stack,dst1);
           stack_set(buf[1],&mut val_stack,dst2);
@@ -625,7 +656,7 @@ fn run(program: &mut Program) {
           let src1_val = stack_get(&val_stack,src1);
           let src2_val = stack_get(&val_stack,src2);
           let src_vals: [u64;2] = [src1_val,src2_val];
-          if TRACE {println!("store2 @{} @{} @bp+{}",src1,src2,op_data);}
+          if TRACE {println!("store2 @{} @{} @bp+{}",src1,src2,offset);}
           write_data(&mut program.allocations,addr,u64_as_bytes(&src_vals));
         }
         0x1c => { // load2.ip [dst1:4][dst2:4][offset:16s]
@@ -647,7 +678,7 @@ fn run(program: &mut Program) {
           let dst2 = (op_data & 0xf) as usize ;
           let offset = (op_data >> 4) as u64;
           let addr = program.ro_addr + offset;
-          if TRACE {println!("load2 @{} @{} @ro_data+{}",dst1,dst2,op_data);}
+          if TRACE {println!("load2 @{} @{} @ro_data+{}",dst1,dst2,offset);}
           let mut buf: [u64;2] = [0;2];
           read_data(&program.allocations,addr,u64_as_bytes_mut(&mut buf));
           stack_set(buf[0],&mut val_stack,dst1);
@@ -659,7 +690,7 @@ fn run(program: &mut Program) {
           let dst2 = (op_data & 0xf) as usize;
           let offset = (op_data >> 4) as u64;
           let addr = program.rw_addr + offset;
-          if TRACE {println!("load2 @{} @{} @rw_data+{}",dst1,dst2,op_data);}
+          if TRACE {println!("load2 @{} @{} @rw_data+{}",dst1,dst2,offset);}
           let mut buf: [u64;2] = [0;2];
           read_data(&program.allocations,addr,u64_as_bytes_mut(&mut buf));
           stack_set(buf[0],&mut val_stack,dst1);
@@ -674,7 +705,7 @@ fn run(program: &mut Program) {
           let src1_val = stack_get(&val_stack,src1);
           let src2_val = stack_get(&val_stack,src2);
           let src_vals: [u64;2] = [src1_val,src2_val];
-          if TRACE {println!("store2 @{} @{} @rw_data+{}",src1,src2,op_data);}
+          if TRACE {println!("store2 @{} @{} @rw_data+{}",src1,src2,offset);}
           write_data(&mut program.allocations,addr,u64_as_bytes(&src_vals));
         }
         0x20..=0x2f => { // jump/call[offset:24s], ret, jz/jnz [src:4][offset:20s]
@@ -1211,17 +1242,69 @@ fn run(program: &mut Program) {
               if TRACE {println!("syscall.exit");}
               process::exit(res as i32)
             }
-            // 1 -> read
+            // TODO: change return of read/write depending on error type
+            // TODO: avoid copy through intermediate buffer
+            1 => { // read
+              let fd = val_stack.pop().unwrap();
+              let count = val_stack.pop().unwrap();
+              let ptr = val_stack.pop().unwrap();
+              if TRACE {println!("syscall.read");}
+              if let Some(file) = program.files.get_mut(&fd) {
+                let mut buf: Box<[u8]> = unsafe{ Box::<[u8]>::new_uninit_slice(count as usize).assume_init() };
+                let res = file.read(&mut buf);
+                let count = *res.as_ref().unwrap_or(&0); // make borrow checker happy...
+                write_data(&mut program.allocations,ptr,&buf[..count]);
+                val_stack.push(res.map(|v|v as i64).unwrap_or(-1) as u64);
+              } else {
+                val_stack.push(u64::MAX);
+              }
+            }
             2 => { // write
               let fd = val_stack.pop().unwrap();
               let count = val_stack.pop().unwrap();
               let ptr = val_stack.pop().unwrap();
               if TRACE {println!("syscall.write");}
-              if fd != 1 {panic!("currently only write to stdout is supported")}
               let mut buf: Box<[u8]> = unsafe{ Box::<[u8]>::new_uninit_slice(count as usize).assume_init() };
               read_data(&program.allocations,ptr,&mut buf);
-              let res = io::stdout().write_all(&buf);
-              val_stack.push(if res.is_ok() {0} else {1});
+              if let Some(file) = program.files.get_mut(&fd) {
+                let res = file.write(&buf);
+                val_stack.push(res.map(|v|v as i64).unwrap_or(-1) as u64);
+              } else {
+                val_stack.push(u64::MAX);
+              }
+            }
+            3 => { // open
+              let mode = val_stack.pop().unwrap();
+              let name_len = val_stack.pop().unwrap();
+              let name_data = val_stack.pop().unwrap();
+              if TRACE {println!("syscall.open");}
+              const FLAG_READ: u64 = 1;
+              const FLAG_WRITE: u64 = 2;
+              const FLAG_APPEND: u64 = 4;
+              let mut name_buf: Box<[u8]> = unsafe{ Box::<[u8]>::new_uninit_slice(name_len as usize).assume_init() };
+              read_data(&program.allocations,name_data,&mut name_buf);
+              let file = OpenOptions::new().read((mode & FLAG_READ)!=0)
+                 .write((mode & FLAG_WRITE)!=0)
+                 .truncate(((mode & FLAG_WRITE)!=0)&((mode & (FLAG_READ|FLAG_APPEND))==0))
+                 .append((mode & FLAG_APPEND)!=0).create((mode & (FLAG_WRITE|FLAG_APPEND))!=0)
+                 .open((str::from_utf8(&name_buf)).map(|s|AsRef::<Path>::as_ref(s)).unwrap_or(AsRef::<Path>::as_ref(std::ffi::OsStr::from_bytes(&name_buf))));
+              if let Ok(file) = file {
+                let fd = program.next_fd;
+                program.files.insert(fd,FileLike::File(file));
+                program.next_fd += 1;
+                val_stack.push(fd);
+              } else {
+                val_stack.push(u64::MAX);
+              }
+            }
+            4 => { // close
+              let fd = val_stack.pop().unwrap();
+              if TRACE {println!("syscall.close");}
+              if fd > 2 && program.files.remove(&fd).is_some() {
+                val_stack.push(0);
+              } else {
+                val_stack.push(1);
+              }
             }
             _ => panic!("unknown syscall-id {}",op_data),
           }
@@ -1270,7 +1353,11 @@ fn load_file(file: &mut File) -> Option<Program> {
     readable: true, writeable: true, executable:false,
     allocation_type: AllocationType::STATIC,
   });
-  return Some(Program{code: code_buffer,ip: ip,sp: sp,ro_addr:ro_addr,rw_addr:rw_addr,allocations: allocations})
+  let mut base_files: HashMap<u64,FileLike> = HashMap::new();
+  base_files.insert(0,FileLike::StdIn(io::stdin()));
+  base_files.insert(1,FileLike::StdOut(io::stdout()));
+  base_files.insert(2,FileLike::StdErr(io::stderr()));
+  return Some(Program{code: code_buffer,ip: ip,sp: sp,ro_addr:ro_addr,rw_addr:rw_addr,allocations: allocations,files:base_files,next_fd: 3})
 }
 
 fn main() -> io::Result<()> {

@@ -229,6 +229,7 @@ class OpLoad2Label(CodeOp):
       else:
         raise Exception("unimplemented: composite operations")
 
+ADDR_OFFSET_BITS=20
 class OpAddr(CodeOp):
   def __init__(self,base,dst,offset):
     self.base = base
@@ -238,6 +239,55 @@ class OpAddr(CodeOp):
     return f"OpAddr(base={self.base},dst={self.dst},offset={self.offset})"
   def generate(self,prog):
     prog.appendU32(self.offset << 12 | (self.dst.index & 0xf) << 8 | addrBaseId(self.base))
+
+class OpAddrLabel(CodeOp):
+  def __init__(self,base,dst):
+    self.base = base
+    self.dst = expectStackLocation(dst,0,15)
+  def __repr__(self):
+    return f"OpAddrLabel(base={self.base},dst={self.dst})"
+  def codeSize(self,labels,ip):
+    if self.base.name in labels:
+      label_base, label_offset = labels[self.base.name]
+      label_offset += self.base.offset
+      ## TODO: handle label-expressions
+      if label_base == "code":
+        offset = label_offset - ip
+        if offset.bit_length() < ADDR_OFFSET_BITS:
+          return 1 ## fits in offset
+        elif offset.bit_length() < ADDR_OFFSET_BITS + LOADI_BITS:
+          return 3 ## addr loadi add
+        return 4
+      else:
+        if label_offset < 0:
+          return 3 ## addr loadi sub
+        elif label_offset.bit_length() <= ADDR_OFFSET_BITS:
+          return 1 ## fits in offset
+        elif label_offset.bit_length() <= ADDR_OFFSET_BITS + LOADI_BITS:
+          return 3 ## addr loadi add
+        return 4
+    return 1
+  def replaceLabels(self,labels,new_ops):
+    if self.base.base != None: raise Exception("label difference is not supported")
+    label_base, label_offset = labels[self.base.name]
+    label_offset += self.base.offset
+    if label_base == "code":
+      offset = label_offset - ip
+      if offset.bit_length() < ADDR_OFFSET_BITS:
+        new_ops.append(OpAddr(label_base,offset)) ## fits in offset
+      elif offset.bit_length() < ADDR_OFFSET_BITS + LOADI_BITS:
+        raise Exception("unimplemented: composite operations") ## loadi load
+      else:
+        raise Exception("unimplemented: composite operations")
+    else:
+      if label_offset < 0:
+        raise Exception("unimplemented: composite operations") ## addr subi load
+      elif label_offset.bit_length() <= ADDR_OFFSET_BITS:
+        new_ops.append(OpAddr(label_base,self.dst,label_offset)) ## fits in offset
+      elif label_offset.bit_length() <= ADDR_OFFSET_BITS + LOADI_BITS:
+        raise Exception("unimplemented: composite operations") ## loadi load
+      else:
+        raise Exception("unimplemented: composite operations")
 
 class OpBinary(CodeOp):
   def __init__(self,base_op,dst,src1,src2,*,val_type,cmp_type):
@@ -726,7 +776,7 @@ class SourceFile:
         self.appendOp(OpLoadRelative(addr.base,is_store,size,dst,addr.offset))
       elif type(addr) == Label:
         self.has_label = True
-        self.appendOp(OpLoadLabel(addr,is_store,dst,0))
+        self.appendOp(OpLoadLabel(addr,is_store,size,dst,0))
       else:
         raise Exception(f"load/store is not implemented: {size} {dst} {addr}")
     elif op_code == "load2" or op_code == "store2":
@@ -751,6 +801,8 @@ class SourceFile:
       addr = parseAddress(args[1])
       if type(addr) == RelativeAddress and type(addr.base) != StackLocation:
         self.appendOp(OpAddr(addr.base,dst,addr.offset))
+      elif type(addr) == Label:
+        self.appendOp(OpAddrLabel(addr,dst))
       else:
         raise Exception(f"addr is not implemented: {dst} {addr}")
     elif (op_code.startswith("cmp.") or op_code.startswith("cmpi.") or
@@ -901,7 +953,6 @@ def parseFile(srcFile="src.txt"):
     ## compute addresses of data
     offset = 0
     for op in src.ro_data:
-      op.offset = offset
       if type(op) == OpLabel:
         if op.name in labels:
           raise Exception("Duplicate label: "+op.name)
@@ -910,11 +961,10 @@ def parseFile(srcFile="src.txt"):
         if op.byte_alignment > 1:
           offset = (offset + (op.byte_alignment-1)) & (-op.byte_alignment)
         continue
-      op.size = op.byteSize(labels)
-      offset += op.size
+      op.byte_size = op.byteSize(labels)
+      offset += op.byte_size
     offset = 0
     for op in src.rw_data:
-      op.offset = offset
       if type(op) == OpLabel:
         if op.name in labels:
           raise Exception("Duplicate label: "+op.name)
@@ -923,8 +973,8 @@ def parseFile(srcFile="src.txt"):
         if op.byte_alignment > 1:
           offset = (offset + (op.byte_alignment-1)) & (-op.byte_alignment)
         continue
-      op.size = op.byteSize(labels)
-      offset += op.size
+      op.byte_size = op.byteSize(labels)
+      offset += op.byte_size
     ## compute addresses of operations, retry if labels change size
     first = True
     change = False
@@ -932,7 +982,6 @@ def parseFile(srcFile="src.txt"):
       offset = 0
       change = first
       for op in src.code:
-        op.offset = offset
         if type(op) == OpLabel:
           if first and op.name in labels:
             raise Exception("Duplicate label: "+op.name)
@@ -944,9 +993,9 @@ def parseFile(srcFile="src.txt"):
           continue
         ## ip is incremented before offset calculations
         op_size = op.codeSize(labels,offset+1)
-        if not first and op.size != op_size:
+        if not first and op.code_size != op_size:
           change = True
-        op.size = op_size
+        op.code_size = op_size
         offset += op_size
       first = False
     new_code = []
