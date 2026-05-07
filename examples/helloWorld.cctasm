@@ -1,0 +1,12 @@
+load2 @0 @0 :str
+loadi @0 $1
+syscall.write
+syscall.exit
+
+!section ro_data
+!align $8
+:str
+data.i64 :str.data :str.data_end-:str.data
+:str.data
+data.i8 "Hello, World!" $10
+:str.data_end
