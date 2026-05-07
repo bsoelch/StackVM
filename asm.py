@@ -50,7 +50,8 @@ def addrBaseId(name):
 def valTypeBits(val_type):
   return {"i8":1,"i16":2,"f16":2,"i32":4,"f32":4,"i64":8,"f64":8}[val_type]
 def syscallId(name):
-  return ["exit","read","write","open","close"].index(name);
+  return ["exit","read","write","open","close"].index(name)
+  ## argc getArg  mmap mremap mprotect munmap  exec
 
 class CodeOp:
   def codeSize(self,labels,ip):
@@ -888,7 +889,6 @@ def parse(code):
   return src
 
 def parseFile(srcFile="src.txt"):
-  ## TODO: parse into program-class, split ops into sections in parse phase
   with open(srcFile,mode="r") as f:
     src = parse(f.read())
   print(*src.code,sep='\n')
