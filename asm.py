@@ -436,7 +436,7 @@ class OpSwap(CodeOp):
   def __repr__(self):
     return f"OpSwap(loc1={self.loc1},loc2={self.loc2})"
   def generate(self,prog):
-    prog.appendU32(((self.loc2.index-1)&0xf) << 20 | ((self.loc1.index-1)&0xf) << 8 | 0x8c)
+    prog.appendU32(((self.loc2.index-1)&0xf) << 20 | ((self.loc1.index-1)&0xf) << 8 | 0x8d)
 
 class OpInsert(CodeOp):
   def __init__(self,dst,src):

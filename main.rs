@@ -1165,7 +1165,32 @@ fn run(program: &mut Program) {
             stack_set(val2,&mut val_stack,dst2);
             stack_set(val3,&mut val_stack,dst3);
         }
-        0x8c => { // swap [A:12][B:12]
+        0x8c => { // copy4 [dst1:3][dst2:3][dst3:3][dst4:3][src1:3][src2:3][src3:3][src4:3]
+            let dst1 = (op_data & 0x7) as usize;
+            let op_data = op_data >> 3;
+            let dst2 = (op_data & 0x7) as usize;
+            let op_data = op_data >> 3;
+            let dst3 = (op_data & 0x7) as usize;
+            let op_data = op_data >> 3;
+            let dst4 = (op_data & 0x7) as usize;
+            let op_data = op_data >> 3;
+            let src1 = (op_data & 0x7) as usize +1;
+            let op_data = op_data >> 3;
+            let src2 = (op_data & 0x7) as usize +1;
+            let op_data = op_data >> 3;
+            let src3 = (op_data & 0x7) as usize +1;
+            let src4 = (op_data >> 3) as usize +1;
+            if TRACE {println!("copy4 @{} @{} @{} @{} @{} @{} @{} @{}",dst1,dst2,dst3,dst4,src1,src2,src3,src4);}
+            let val1 = stack_get(&val_stack,src1);
+            let val2 = stack_get(&val_stack,src2);
+            let val3 = stack_get(&val_stack,src3);
+            let val4 = stack_get(&val_stack,src4);
+            stack_set(val1,&mut val_stack,dst1);
+            stack_set(val2,&mut val_stack,dst2);
+            stack_set(val3,&mut val_stack,dst3);
+            stack_set(val4,&mut val_stack,dst4);
+        }
+        0x8d => { // swap [A:12][B:12]
             let a1 = (op_data & 0xfff) as usize + 1;
             let b1 = ((op_data >> 12) & 0xfff) as usize +1;
             if TRACE {println!("swap @{} @{}",a1,b1);}
@@ -1174,7 +1199,7 @@ fn run(program: &mut Program) {
             stack_set(val1,&mut val_stack,b1);
             stack_set(val2,&mut val_stack,a1);
         }
-        0x8d => { // deep-swap [A:4][B:20]
+        0x8e => { // deep-swap [A:4][B:20]
             let a1 = (op_data & 0xf) as usize + 1;
             let b1 = (op_data >> 4) as usize + 1;
             if TRACE {println!("swap @{} @{}",a1,b1);}
@@ -1183,7 +1208,7 @@ fn run(program: &mut Program) {
             stack_set(val1,&mut val_stack,b1);
             stack_set(val2,&mut val_stack,a1);
         }
-        0x8e => { // swap2 [a1:6][a2:6][b1:6][b2:6]
+        0x8f => { // swap2 [a1:6][a2:6][b1:6][b2:6]
             let a1 = (op_data & 0x3f) as usize + 1;
             let op_data = op_data >> 6;
             let a2 = (op_data & 0x3f) as usize + 1;
@@ -1199,31 +1224,6 @@ fn run(program: &mut Program) {
             stack_set(val2,&mut val_stack,b2);
             stack_set(val3,&mut val_stack,a1);
             stack_set(val4,&mut val_stack,a2);
-        }
-        0x8f => { // swap3 [A1:4][B1:4][C1:4][A2:4][B2:4][C2:4]
-            let a1 = (op_data & 0xf) as usize + 1;
-            let op_data = op_data >> 4;
-            let a2 = (op_data & 0xf) as usize + 1;
-            let op_data = op_data >> 4;
-            let a3 = (op_data & 0xf) as usize + 1;
-            let op_data = op_data >> 4;
-            let b1 = (op_data & 0xf) as usize + 1;
-            let op_data = op_data >> 4;
-            let b2 = (op_data & 0xf) as usize + 1;
-            let b3 = (op_data >> 4) as usize + 1;
-            if TRACE {println!("swap3 @{} @{} @{} @{} @{} @{}",a1,b1,a2,b2,a3,b3);}
-            let val1 = stack_get(&val_stack,a1);
-            let val2 = stack_get(&val_stack,a2);
-            let val3 = stack_get(&val_stack,a3);
-            let val4 = stack_get(&val_stack,b1);
-            let val5 = stack_get(&val_stack,b2);
-            let val6 = stack_get(&val_stack,b3);
-            stack_set(val1,&mut val_stack,b1);
-            stack_set(val2,&mut val_stack,b2);
-            stack_set(val3,&mut val_stack,b3);
-            stack_set(val4,&mut val_stack,a1);
-            stack_set(val5,&mut val_stack,a2);
-            stack_set(val6,&mut val_stack,a3);
         }
         0x90 => { // local-alloc [count:24s]
           let count = ((op as i32) >> base_shift) as i64;
