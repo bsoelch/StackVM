@@ -308,6 +308,32 @@ fn op_mul(arg1: u64,arg2: u64,val_type: u32) -> u64 {
     _ => panic!("unsupported val_type for mul: {}",val_type)
   }
 }
+fn op_divrem(arg1: u64,arg2: u64,val_type: u32) -> (u64, u64) {
+  match val_type {
+    VAL_I8  => {(((arg1 as i8)/(arg2 as i8)) as u64,((arg1 as i8)%(arg2 as i8)) as u64) }
+    VAL_I16 => {(((arg1 as i16)/(arg2 as i16)) as u64,((arg1 as i16)%(arg2 as i16)) as u64) }
+    VAL_I32  => {(((arg1 as i32)/(arg2 as i32)) as u64,((arg1 as i32)%(arg2 as i32)) as u64) }
+    VAL_I64 => {(((arg1 as i64)/(arg2 as i64)) as u64,((arg1 as i64)%(arg2 as i64)) as u64)}
+    VAL_F32 => {
+       let a = f32::from_bits(arg1 as u32);let b = f32::from_bits(arg2 as u32);
+       ((a/b).to_bits() as u64,(a-b*(a/b).floor()).to_bits() as u64)
+    }
+    VAL_F64 => {
+       let a = f64::from_bits(arg1);let b = f64::from_bits(arg2);
+       ((a/b).to_bits(),(a-b*(a/b).floor()).to_bits())
+    }
+    _ => panic!("unsupported val_type for div: {}",val_type)
+  }
+}
+fn op_udivrem(arg1: u64,arg2: u64,val_type: u32) -> (u64, u64) {
+  match val_type {
+    VAL_I8  => {(((arg1 as u8)/(arg2 as u8)) as u64,((arg1 as u8)%(arg2 as u8)) as u64) }
+    VAL_I16 => {(((arg1 as u16)/(arg2 as u16)) as u64,((arg1 as u16)%(arg2 as u16)) as u64) }
+    VAL_I32  => {(((arg1 as u32)/(arg2 as u32)) as u64,((arg1 as u32)%(arg2 as u32)) as u64) }
+    VAL_I64 => {(arg1/arg2,arg1%arg2)}
+    _ => panic!("unsupported val_type for udiv: {}",val_type)
+  }
+}
 fn op_and(arg1: u64,arg2: u64,val_type: u32) -> u64 {
   match val_type {
     VAL_I8  => {((arg1 as u8) & (arg2 as u8)) as u64 }
@@ -881,6 +907,7 @@ fn run(program: &mut Program) {
           stack_set(res,&mut val_stack,dst)
         }
         0x50..=0x57 => { // binary-op[val-type:3] [bin_op:4][dst:4][src1:4][src2:4][cmp-type:3]
+          // binary-op[val-type:3] [bin_op_div:4][dst:4][src1:4][src2:4][dst0:4][div-type:2]
           let val_type = op_type & 0x7; // i8 i16 i32 i64 . f16 f32 f64
           let bin_op = op_data & 0xf;
           let op_data = op_data >> 4;
@@ -894,12 +921,17 @@ fn run(program: &mut Program) {
           const OP_ADD: u32 = 1;
           const OP_SUB: u32 = 2;
           const OP_MUL: u32 = 3;
+          const OP_DIV: u32 = 4;
+          const OP_UDIV: u32 = 5;
           const OP_AND: u32 = 8;
           const OP_OR: u32 = 9;
           const OP_XOR: u32 = 10;
           const OP_SHL: u32 = 11;
           const OP_LSHR: u32 = 12;
           const OP_ASHR: u32 = 13;
+          const DIV_HAS_DIV: u32 = 1;
+          const DIV_HAS_REM: u32 = 2;
+          const DIV_IS_DIV_REM: u32 = DIV_HAS_DIV | DIV_HAS_REM;
           let res = match bin_op {
             OP_CMP => {
               let cmp_type = op_data & 0x7; // eq ne . . lt le ult ule
@@ -930,7 +962,56 @@ fn run(program: &mut Program) {
                 stack_get(&val_stack,src2),
               val_type)
             }
-            // TODO: div/rem/udiv/urem
+            OP_DIV => {
+              let dst0 = (op_data & 0xf) as usize;
+              let div_type = (op_data >> 4) & 0x3; // . div rem divrem
+              if TRACE {
+                if div_type == DIV_IS_DIV_REM {
+                    println!("divrem.{} @{} @{} @{} @{}",val_type_name(val_type),dst0,dst,src1,src2);
+                } else if (div_type & DIV_HAS_REM) != 0 {
+                    println!("rem.{} @{} @{} @{}",val_type_name(val_type),dst,src1,src2);
+                } else {
+                    println!("div.{} @{} @{} @{}",val_type_name(val_type),dst,src1,src2);
+                }
+              }
+              let (div, rem) = op_divrem(
+                stack_get(&val_stack,src1),
+                stack_get(&val_stack,src2),
+              val_type);
+              if div_type == DIV_IS_DIV_REM {
+                stack_set(div,&mut val_stack,dst0);
+                rem
+              } else if (div_type & DIV_HAS_REM) != 0 {
+                rem
+              } else {
+                div
+              }
+            }
+            OP_UDIV => {
+              let dst0 = (op_data & 0xf) as usize;
+              let div_type = (op_data >> 4) & 0x3; // . div rem divrem
+              if TRACE {
+                if div_type == DIV_IS_DIV_REM {
+                    println!("udivrem.{} @{} @{} @{} @{}",val_type_name(val_type),dst0,dst,src1,src2);
+                } else if (div_type & DIV_HAS_REM) != 0 {
+                    println!("urem.{} @{} @{} @{}",val_type_name(val_type),dst,src1,src2);
+                } else {
+                    println!("udiv.{} @{} @{} @{}",val_type_name(val_type),dst,src1,src2);
+                }
+              }
+              let (div, rem) = op_udivrem(
+                stack_get(&val_stack,src1),
+                stack_get(&val_stack,src2),
+              val_type);
+              if div_type == DIV_IS_DIV_REM {
+                stack_set(div,&mut val_stack,dst0);
+                rem
+              } else if (div_type & DIV_HAS_REM) != 0 {
+                rem
+              } else {
+                div
+              }
+            }
             OP_AND => {
               if TRACE {println!("and.{} @{} @{} @{}",val_type_name(val_type),dst,src1,src2);}
               op_and(

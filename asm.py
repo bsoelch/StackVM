@@ -36,6 +36,8 @@ def jumpTypeId(name):
   return ["jmp.abs","call.abs","jmp","call","jnz","jz","jnz pop","jz pop"].index(name)
 def binOpId(name):
   return ["cmp","add","sub","mul","","","","","and","or","xor","shl","lshr","ashr"].index(name)
+def divTypeId(name):
+  return {"div":1,"udiv":1,"rem":2,"urem":2,"divrem":3,"udivrem":3}[name]
 def unaryOpId(name):
   return ["neg","not","shl","lshr","ashr"].index(name)
 def binImmOpId(name):
@@ -301,6 +303,19 @@ class OpBinary(CodeOp):
     return f"OpBinary({self.base_op},dst={self.dst},src1={self.src1},src2={self.src2},val_type={self.val_type},cmp_type={self.cmp_type})"
   def generate(self,prog):
     prog.appendU32((cmpTypeId(self.cmp_type) << 24 if self.cmp_type else 0) | ((self.src2.index-1) & 0xf) << 20 | ((self.src1.index-1) & 0xf) << 16 | (self.dst.index & 0xf) << 12 | binOpId(self.base_op) << 8 | (valTypeId(self.val_type) | 0x50))
+
+class OpDiv(CodeOp):
+  def __init__(self,base_op,dst,src1,src2,*,val_type,dst0):
+    self.base_op = base_op
+    self.val_type = val_type
+    self.dst0 = expectStackLocation(dst0,0,15)
+    self.dst = expectStackLocation(dst,0,15)
+    self.src1 = expectStackLocation(src1,1,16)
+    self.src2 = expectStackLocation(src2,1,16)
+  def __repr__(self):
+    return f"OpDiv({self.base_op},dst={self.dst},dst0={self.dst0},src1={self.src1},src2={self.src2},val_type={self.val_type})"
+  def generate(self,prog):
+    prog.appendU32(divTypeId(self.base_op) << 28 | ((self.dst0.index) & 0xf) << 24 | ((self.src2.index-1) & 0xf) << 20 | ((self.src1.index-1) & 0xf) << 16 | (self.dst.index & 0xf) << 12 | (0x5 if self.base_op[0]=="u" else 0x4) << 8 | (valTypeId(self.val_type) | 0x50))
 
 class OpCmpImm(CodeOp):
   def __init__(self,dst,src1,src2,*,val_type,cmp_type,swap_args):
@@ -586,6 +601,10 @@ class OpStart:
     return f"OpStart()"
   def generate(self,prog):
     prog.start = prog.code_addr + len(prog.code)
+  def codeSize(self,labels,ip):
+    return 0
+  def byteSize(self,labels):
+    return 0
   def replaceLabels(self,labels,new_ops):
     new_ops.append(self)
 
@@ -862,6 +881,7 @@ class SourceFile:
       if type(addr) == RelativeAddress and type(addr.base) != StackLocation:
         self.appendOp(OpAddr(addr.base,dst,addr.offset))
       elif type(addr) == Label:
+        self.has_label = True
         self.appendOp(OpAddrLabel(addr,dst))
       else:
         raise Exception(f"addr is not implemented: {dst} {addr}")
@@ -922,6 +942,20 @@ class SourceFile:
           raise Exception("unsupported operation for immediate: "+base_op)
       else:
         self.appendOp(OpBinary(base_op,dst,src1,src2, cmp_type = cmp_type,val_type = val_type))
+    elif (op_code.startswith("div.") or op_code.startswith("udiv.")
+        or op_code.startswith("rem.") or op_code.startswith("urem.")
+        or op_code.startswith("divrem.") or op_code.startswith("udivrem.")):
+      base_op, val_type = op_code.split('.')
+      val_type = parseValType(val_type)
+      if len(base_op) >= 6: ## (u)divrem
+        dst0 = parseLoc(args[0])
+        args = args[1:]
+      else:
+        dst0 = StackLocation(0)
+      dst1 = parseLoc(args[0])
+      src1 = parseLoc(args[1])
+      src2 = parseLoc(args[2])
+      self.appendOp(OpDiv(base_op, dst1, src1,src2,val_type = val_type,dst0 = dst0))
     elif op_code.startswith("neg.") or op_code.startswith("not."):
       base_op, val_type = op_code.split('.')
       val_type = parseValType(val_type)
@@ -938,12 +972,12 @@ class SourceFile:
       self.appendOp(OpCvt(dst, src,src_type = src_type,signed = signed,dst_type = dst_type))
     ## TODO? separate op-code for long-jump/long-call `ljmp`(?)
     elif op_code == "jmp" or op_code == "call" or op_code == "jmp.abs" or op_code == "call.abs":
-      target = parseArg(args[0]) # TODO check target range
+      target = parseAddress(args[0]) # TODO check target range
       self.appendOp(OpJmp(op_code, target))
     elif op_code == "ret":
       self.appendOp(OpRet())
     elif op_code == "jz" or op_code == "jnz":
-      target = parseArg(args[1]) # TODO check target range
+      target = parseAddress(args[1]) # TODO check target range
       if args[0] == "pop":
         self.appendOp(OpJmp(op_code + " pop", target))
       else:
