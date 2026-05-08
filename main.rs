@@ -92,7 +92,7 @@ enum TreeElement{
 }
 struct AllocationTree {
   root: AllocationNode,
-  // TODO? caching for commonly accessed addressed (+ special-casing for code access)
+  // TODO? caching for commonly accessed addresses (+ special-casing for code access)
 }
 impl AllocationNode{
   fn new() -> Self {
@@ -552,7 +552,7 @@ fn run(program: &mut Program) {
           let addr = stack_get(&val_stack,ptr) + (offset as u64);
           if TRACE {
             if is_store {
-                println!("store.{} @{} @{}+{}",size,dst,ptr,offset);
+                println!("store.{} @{} @{}+{}",size,dst + 1,ptr,offset);
             } else {
                 println!("load.{} @{} @{}+{}",size,dst,ptr,offset);
             }
@@ -739,6 +739,7 @@ fn run(program: &mut Program) {
           const JUMP_TYPE_CALL_ADDR: u32 = 1;
           const JUMP_TYPE_JMP: u32 = 2; // jump/call[offset:24s]
           const JUMP_TYPE_CALL: u32 = 3;
+          // TODO? jmp pop $offset
           const JUMP_UNARY: u32 = 4; // start of unary jumps
           const JUMP_TYPE_JNZ: u32 = 4; // jz/jnz [src:4][offset:20s]
           const JUMP_TYPE_JZ: u32 = 5;
@@ -746,7 +747,6 @@ fn run(program: &mut Program) {
           const JUMP_TYPE_JNZ_POP: u32 = 6; // jz/jnz [offset:24s]
           const JUMP_TYPE_JZ_POP: u32 = 7;
           let jump_type = op_type & 0x7;
-          // signed for relative jump, unsigned for absolute jump
           let mut op_data = (op as i32) >> base_shift; // signed immediate (keep high bit of op)
           let arg_index = (op_data & 0xf) as usize + 1; // needed for tracing
           let base_addr = if jump_type <= JUMP_TYPE_CALL_ADDR {
@@ -778,6 +778,7 @@ fn run(program: &mut Program) {
               };
               if jump_type == JUMP_TYPE_CALL && addr == -1 { // return (call to -1 is endless loop)
                 if TRACE {println!("ret");}
+                program.sp = rbp;
                 rbp = prog_stack_pop(program);
                 ip = prog_stack_pop(program) as usize;
               } else {
@@ -1306,10 +1307,10 @@ fn run(program: &mut Program) {
           let count = ((op as i32) >> base_shift) as i64;
           if count > 0 {
             if TRACE {println!("alloc ${}",count);}
-            rbp = (rbp as i64 - (count+7)&-8) as u64;
+            program.sp = (program.sp as i64 - (count+7)&-8) as u64;
           } else {
             if TRACE {println!("dealloc ${}",-count);}
-            rbp = (rbp as i64 - (count-7)&-8) as u64;
+            program.sp = (program.sp as i64 - (count-7)&-8) as u64;
           }
         }
         0xff => { // syscall [call-id:24u]

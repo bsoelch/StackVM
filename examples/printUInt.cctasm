@@ -1,0 +1,35 @@
+:printUInt
+  alloc $32
+  addr @0 @bp
+  loadi @0 $10
+  subi.i64 @2 @2 $1
+  store.1 @1 @2
+  drop $1
+  addr @0 :digits
+:loop
+  udivrem.i64 @0 @0 @4 @3
+  add.i64 @1 @1 @3
+  load.1 @1 @1
+  subi.i64 @4 @4 $1
+  store.1 @1 @4
+  copy.drop1 @5 @2
+  cmpi.i64 ugt @1 @1 $0
+  jnz pop :loop
+  addr @1 @bp
+  sub.i64 @1 @1 @2
+  loadi @0 $1
+  syscall.write
+  drop $3
+  ret
+!start
+  loadi @0 $-1
+  loadi @0 $10
+  call :printUInt
+  loadi @0 $x1001
+  loadi.16 @1 $x1100
+  loadi @0 $16
+  call :printUInt
+
+!section ro_data
+:digits
+data.i8 "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"
