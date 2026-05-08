@@ -130,10 +130,10 @@ class OpLoadLabel(CodeOp):
   def replaceLabels(self,labels,new_ops):
     label_base, label_offset = labels[self.base.name]
     label_offset += self.base.offset
-    if self.base.base != None: raise Exception("label difference is not supported")
+    if self.base.base is not None: raise Exception("label difference is not supported")
     if self.is_store and label_base in ["code","ro_data"]: raise Exception(f"cannot write to {label_base} address")
     if label_base == "code":
-      offset = (self.offset + label_offset) - ip
+      offset = (self.offset + label_offset) - self.code_location
       if offset.bit_length() < LOAD_REL_OFFSET_BITS:
         new_ops.append(OpLoadRelative("code",self.is_store,self.size,self.val,offset))
       elif offset.bit_length() < LOAD_REL_OFFSET_BITS + LOADI_BITS:
@@ -208,12 +208,12 @@ class OpLoad2Label(CodeOp):
         return 3
     return 1
   def replaceLabels(self,labels,new_ops):
-    if self.base.base != None: raise Exception("label difference is not supported")
+    if self.base.base is not None: raise Exception("label difference is not supported")
     label_base, label_offset = labels[self.base.name]
     if self.is_store and label_base in ["code","ro_data"]: raise Exception(f"cannot write to {label_base} address")
     label_offset += self.base.offset
     if label_base == "code":
-      offset = (self.offset + label_offset) - ip
+      offset = (self.offset + label_offset) - self.code_location
       if offset.bit_length() < LOAD2_REL_OFFSET_BITS:
         new_ops.append(OpLoad2Relative(label_base,self.is_store,self.val1,self.val2,offset)) ## fits in offset
       elif offset.bit_length() < LOAD2_REL_OFFSET_BITS + LOADI_BITS:
@@ -270,11 +270,11 @@ class OpAddrLabel(CodeOp):
         return 4
     return 1
   def replaceLabels(self,labels,new_ops):
-    if self.base.base != None: raise Exception("label difference is not supported")
+    if self.base.base is not None: raise Exception("label difference is not supported")
     label_base, label_offset = labels[self.base.name]
     label_offset += self.base.offset
     if label_base == "code":
-      offset = label_offset - ip
+      offset = label_offset - self.code_location
       if offset.bit_length() < ADDR_OFFSET_BITS:
         new_ops.append(OpAddr(label_base,offset)) ## fits in offset
       elif offset.bit_length() < ADDR_OFFSET_BITS + LOADI_BITS:
@@ -383,6 +383,7 @@ class OpCvt(CodeOp):
   def generate(self,prog):
     prog.appendU32(valTypeId(self.src_type) << 16 | ((self.src.index-1) & 0xf) << 12 | (self.dst.index & 0xf) << 8 | (valTypeId(self.dst_type) | (0x68 if self.signed else 0x60)))
 
+JMP_OFFSET_BITS = 24
 class OpJmp(CodeOp):
   def __init__(self,jmp_type,target):
     self.jmp_type = jmp_type
@@ -401,6 +402,40 @@ class OpJmpAddr(CodeOp):
   def generate(self,prog):
     prog.appendU32(self.target << 8 | (jumpTypeId(self.jmp_type) | 0x20))
 
+class OpJmpLabel(CodeOp):
+  def __init__(self,jmp_type,base,offset):
+    self.jmp_type = jmp_type
+    self.base = base
+    self.offset = offset
+  def __repr__(self):
+    return f"OpJmpLabel({self.jmp_type},base={self.base},offset={self.offset})"
+  def codeSize(self,labels,ip):
+    if self.base in labels:
+      label_base, label_offset = labels[self.base]
+      if label_base == "code":
+        offset = (self.offset + label_offset) - ip
+        if offset.bit_length() < JMP_OFFSET_BITS:
+          return 1 ## fits in offset
+        elif offset.bit_length() < JMP_OFFSET_BITS + LOADI_BITS:
+          return 2 ## loadi jmp
+        return 3
+      else:
+        raise Exception(f"cannot jump to {label_base} section: {self.base}")
+    return 1
+  def replaceLabels(self,labels,new_ops):
+    label_base, label_offset = labels[self.base]
+    if label_base == "code":
+      offset = (self.offset + label_offset) - self.code_location
+      if offset.bit_length() < JMP_OFFSET_BITS:
+        new_ops.append(OpJmp(self.jmp_type,offset))
+      elif offset.bit_length() < JMP_OFFSET_BITS + LOADI_BITS:
+        raise Exception("unimplemented: composite operations")
+      else:
+        raise Exception("unimplemented: composite operations")
+    else:
+      raise Exception(f"cannot jump to {label_base} section: {self.base}")
+
+JMPIF_OFFSET_BITS = 20
 class OpJmpIf(CodeOp):
   def __init__(self,jmp_type,arg,target):
     self.jmp_type = jmp_type
@@ -410,6 +445,40 @@ class OpJmpIf(CodeOp):
     return f"OpJmpIf({self.jmp_type},arg={self.arg},target={self.target})"
   def generate(self,prog):
     prog.appendU32(self.target << 12 | ((self.arg.index-1)&0xf) | (jumpTypeId(self.jmp_type) | 0x20))
+
+class OpJmpIfLabel(CodeOp):
+  def __init__(self,jmp_type,arg,base,offset):
+    self.jmp_type = jmp_type
+    self.arg = expectStackLocation(arg,1,16)
+    self.base = base
+    self.offset = offset
+  def __repr__(self):
+    return f"OpJmpLabel({self.jmp_type},arg={self.arg},base={self.base},offset={self.offset})"
+  def codeSize(self,labels,ip):
+    if self.base in labels:
+      label_base, label_offset = labels[self.base]
+      if label_base == "code":
+        offset = (self.offset + label_offset) - ip
+        if offset.bit_length() < JMPIF_OFFSET_BITS:
+          return 1 ## fits in offset
+        elif offset.bit_length() < JMPIF_OFFSET_BITS + LOADI_BITS:
+          return 2 ## loadi jmp
+        return 3
+      else:
+        raise Exception(f"cannot jump to {label_base} section: {self.base}")
+    return 1
+  def replaceLabels(self,labels,new_ops):
+    label_base, label_offset = labels[self.base]
+    if label_base == "code":
+      offset = (self.offset + label_offset) - self.code_location
+      if offset.bit_length() < JMPIF_OFFSET_BITS:
+        new_ops.append(OpJmpIf(self.jmp_type,self.arg,offset))
+      elif offset.bit_length() < JMPIF_OFFSET_BITS + LOADI_BITS:
+        raise Exception("unimplemented: composite operations")
+      else:
+        raise Exception("unimplemented: composite operations")
+    else:
+      raise Exception(f"cannot jump to {label_base} section: {self.base}")
 
 class OpRet(CodeOp):
   def __init__(self):
@@ -560,7 +629,7 @@ class OpData:
         new_data.append(val)
         continue
       label_base, label_offset = labels[val.name]
-      if val.base != None:
+      if val.base is not None:
         val_base, val_offset = labels[val.base]
         if label_base == val_base:
           new_data.append(label_offset-val_offset)
@@ -977,7 +1046,6 @@ class SourceFile:
       dst = parseLoc(args[0])
       src = parseLoc(args[1])
       self.appendOp(OpCvt(dst, src,src_type = src_type,signed = signed,dst_type = dst_type))
-    ## TODO? separate op-code for long-jump/long-call `ljmp`(?)
     elif op_code == "jmp" or op_code == "call":
       target = parseAddress(args[0])
       if type(target) == int: # TODO check target range
@@ -987,18 +1055,30 @@ class SourceFile:
         self.appendOp(OpJmpAddr(op_code+"@", target,0))
       elif type(target) == RelativeAddress and type(target.base) == StackLocation: # TODO check offset range
         self.appendOp(OpJmpAddr(op_code+"@", target.base, target.offset))
-      ## TODO: labels
+      elif type(target) == Label:
+        if target.base is not None: raise Exception("label difference is not supported")
+        self.appendOp(OpJmpLabel(op_code, target.name, target.offset))
       else:
-        raise Exception("unsupported jump target: "+target)
+        raise Exception(f"unsupported jump target: {target}")
     elif op_code == "ret":
       self.appendOp(OpRet())
     elif op_code == "jz" or op_code == "jnz":
-      target = parseAddress(args[1]) # TODO check target range
-      if args[0] == "pop":
-        self.appendOp(OpJmp(op_code + " pop", target))
+      target = parseAddress(args[1])
+      if type(target) == int: # TODO check target range
+        if args[0] == "pop":
+          self.appendOp(OpJmp(op_code + " pop", target))
+        else:
+          arg = parseLoc(args[0])
+          self.appendOp(OpJmpIf(op_code, arg, target))
+      elif type(target) == Label:
+        if target.base is not None: raise Exception("label difference is not supported")
+        if args[0] == "pop":
+          self.appendOp(OpJmpLabel(op_code + " pop", target.name, target.offset))
+        else:
+          arg = parseLoc(args[0])
+          self.appendOp(OpJmpIfLabel(op_code, arg, target.name, target.offset))
       else:
-        arg = parseLoc(args[0])
-        self.appendOp(OpJmpIf(op_code, arg, target))
+        raise Exception(f"unsupported jump target: {target}")
     elif op_code == "drop":
       count = parseInt(args[0])
       self.appendOp(OpDrop(count))
@@ -1139,6 +1219,7 @@ def parseFile(srcFile="src.txt"):
             offset = (offset + (word_alignemnt-1)) & (-word_alignemnt)
           continue
         ## ip is incremented before offset calculations
+        op.code_location = offset+1
         op_size = op.codeSize(labels,offset+1)
         if not first and op.code_size != op_size:
           change = True
