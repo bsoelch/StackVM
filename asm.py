@@ -33,7 +33,7 @@ def valTypeId(name):
 def cmpTypeId(name):
   return ["eq","ne","","","lt","le","ult","ule"].index(name)
 def jumpTypeId(name):
-  return ["jmp.abs","call.abs","jmp","call","jnz","jz","jnz pop","jz pop"].index(name)
+  return ["jmp@","call@","jmp","call","jnz","jz","jnz pop","jz pop"].index(name)
 def binOpId(name):
   return ["cmp","add","sub","mul","","","","","and","or","xor","shl","lshr","ashr"].index(name)
 def divTypeId(name):
@@ -384,25 +384,32 @@ class OpCvt(CodeOp):
     prog.appendU32(valTypeId(self.src_type) << 16 | ((self.src.index-1) & 0xf) << 12 | (self.dst.index & 0xf) << 8 | (valTypeId(self.dst_type) | (0x68 if self.signed else 0x60)))
 
 class OpJmp(CodeOp):
-  def __init__(self,jmp_type,target,*,is_long_jump=False):
+  def __init__(self,jmp_type,target):
     self.jmp_type = jmp_type
-    self.is_long_jump = is_long_jump
     self.target = target
   def __repr__(self):
     return f"OpJmp({self.jmp_type},target={self.target})"
   def generate(self,prog):
-    prog.appendU32(self.target << 8 | ((0x8 if self.is_long_jump else 0) | jumpTypeId(self.jmp_type) | 0x20))
+    prog.appendU32(self.target << 8 | (jumpTypeId(self.jmp_type) | 0x20))
+
+class OpJmpAddr(CodeOp):
+  def __init__(self,jmp_type,addr,offset):
+    self.jmp_type = jmp_type
+    self.target = target
+  def __repr__(self):
+    return f"OpJmp({self.jmp_type},target={self.target})"
+  def generate(self,prog):
+    prog.appendU32(self.target << 8 | (jumpTypeId(self.jmp_type) | 0x20))
 
 class OpJmpIf(CodeOp):
-  def __init__(self,jmp_type,arg,target,*,is_long_jump=False):
+  def __init__(self,jmp_type,arg,target):
     self.jmp_type = jmp_type
-    self.is_long_jump = is_long_jump
     self.arg = expectStackLocation(arg,1,16)
     self.target = target
   def __repr__(self):
     return f"OpJmpIf({self.jmp_type},arg={self.arg},target={self.target})"
   def generate(self,prog):
-    prog.appendU32(self.target << 12 | ((self.arg.index-1)&0xf) | ((0x8 if self.is_long_jump else 0) | jumpTypeId(self.jmp_type) | 0x20))
+    prog.appendU32(self.target << 12 | ((self.arg.index-1)&0xf) | (jumpTypeId(self.jmp_type) | 0x20))
 
 class OpRet(CodeOp):
   def __init__(self):
@@ -971,9 +978,18 @@ class SourceFile:
       src = parseLoc(args[1])
       self.appendOp(OpCvt(dst, src,src_type = src_type,signed = signed,dst_type = dst_type))
     ## TODO? separate op-code for long-jump/long-call `ljmp`(?)
-    elif op_code == "jmp" or op_code == "call" or op_code == "jmp.abs" or op_code == "call.abs":
-      target = parseAddress(args[0]) # TODO check target range
-      self.appendOp(OpJmp(op_code, target))
+    elif op_code == "jmp" or op_code == "call":
+      target = parseAddress(args[0])
+      if type(target) == int: # TODO check target range
+        self.appendOp(OpJmp(op_code, target))
+      ## TODO: ip-relative addresses
+      elif type(target) == StackLocation:
+        self.appendOp(OpJmpAddr(op_code+"@", target,0))
+      elif type(target) == RelativeAddress and type(target.base) == StackLocation: # TODO check offset range
+        self.appendOp(OpJmpAddr(op_code+"@", target.base, target.offset))
+      ## TODO: labels
+      else:
+        raise Exception("unsupported jump target: "+target)
     elif op_code == "ret":
       self.appendOp(OpRet())
     elif op_code == "jz" or op_code == "jnz":

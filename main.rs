@@ -734,60 +734,56 @@ fn run(program: &mut Program) {
           if TRACE {println!("store2 @{} @{} @rw_data+{}",src1,src2,offset);}
           write_data(&mut program.allocations,addr,u64_as_bytes(&src_vals));
         }
-        0x20..=0x2f => { // jump/call[offset:24s], ret, jz/jnz [src:4][offset:20s]
-          const JUMP_TYPE_JMP_ABS: u32 = 0;
-          const JUMP_TYPE_CALL_ABS: u32 = 1;
-          const JUMP_TYPE_JMP: u32 = 2;
+        0x20..=0x2f => { // jump/call, ret, jz/jnz
+          const JUMP_TYPE_JMP_ADDR: u32 = 0; // jump/call[base:4][offset:20s]
+          const JUMP_TYPE_CALL_ADDR: u32 = 1;
+          const JUMP_TYPE_JMP: u32 = 2; // jump/call[offset:24s]
           const JUMP_TYPE_CALL: u32 = 3;
           const JUMP_UNARY: u32 = 4; // start of unary jumps
-          const JUMP_TYPE_JNZ: u32 = 4;
+          const JUMP_TYPE_JNZ: u32 = 4; // jz/jnz [src:4][offset:20s]
           const JUMP_TYPE_JZ: u32 = 5;
           const JUMP_POP: u32 = 6; // start of dropping jumps
-          const JUMP_TYPE_JNZ_POP: u32 = 6;
+          const JUMP_TYPE_JNZ_POP: u32 = 6; // jz/jnz [offset:24s]
           const JUMP_TYPE_JZ_POP: u32 = 7;
           let jump_type = op_type & 0x7;
-          let long_jump = (op_type & 0x8) != 0;
           // signed for relative jump, unsigned for absolute jump
-          let mut op_data = if long_jump || jump_type <= JUMP_TYPE_CALL_ABS {
-            op_data as i32 // unsigned immediate (high bit of op_data is zero)
-          } else {
-            (op as i32) >> base_shift // signed immediate (keep high bit of op)
-          };
-          let base_addr = if long_jump {
-            val_stack.pop().unwrap()
+          let mut op_data = (op as i32) >> base_shift; // signed immediate (keep high bit of op)
+          let arg_index = (op_data & 0xf) as usize + 1; // needed for tracing
+          let base_addr = if jump_type <= JUMP_TYPE_CALL_ADDR {
+            op_data >>= 4;
+            stack_get(&val_stack,arg_index)
           } else { 0 };
-          let src_index = (op_data & 0xf) as usize + 1; // needed for tracing
           let src = if jump_type < JUMP_UNARY { 0 }
           else if jump_type >= JUMP_POP {
             val_stack.pop().unwrap()
           } else {
             op_data >>= 4;
-            stack_get(&val_stack,src_index)
+            stack_get(&val_stack,arg_index)
           };
-          let addr = base_addr as i64 + op_data as i64;
+          let addr = op_data as i64;
           match jump_type {
             JUMP_TYPE_JMP => {
               if TRACE {println!("jmp ${}",addr);}
               ip = (ip as i64 + addr) as usize;
             }
-            JUMP_TYPE_JMP_ABS => {
-              if TRACE {println!("jmp.abs ${}",addr);}
-              ip = addr as usize;
+            JUMP_TYPE_JMP_ADDR => {
+              if TRACE {println!("jmp @{}+${}",arg_index,addr);}
+              ip = (base_addr as i64 + addr) as usize;
             }
-            JUMP_TYPE_CALL | JUMP_TYPE_CALL_ABS => {
-              let dst = if jump_type == JUMP_TYPE_CALL_ABS {
-                addr as usize
+            JUMP_TYPE_CALL | JUMP_TYPE_CALL_ADDR => {
+              let dst = if jump_type == JUMP_TYPE_CALL_ADDR {
+                (base_addr as i64 + addr) as usize
               } else {
                 (ip as i64 + addr) as usize
               };
-              if addr == -1 { // return (call to -1 is endless loop)
+              if jump_type == JUMP_TYPE_CALL && addr == -1 { // return (call to -1 is endless loop)
                 if TRACE {println!("ret");}
                 rbp = prog_stack_pop(program);
                 ip = prog_stack_pop(program) as usize;
               } else {
                 if TRACE {
-                    if jump_type == JUMP_TYPE_CALL_ABS {
-                        println!("call.abs ${}",addr);
+                    if jump_type == JUMP_TYPE_CALL_ADDR {
+                        if TRACE {println!("call @{}+${}",arg_index,addr);}
                     } else {
                         println!("call ${}",addr);
                     }
@@ -799,7 +795,7 @@ fn run(program: &mut Program) {
               }
             }
             JUMP_TYPE_JNZ => {
-              if TRACE {println!("jnz @{} ${}",src_index,addr);}
+              if TRACE {println!("jnz @{} ${}",arg_index,addr);}
               if src != 0 {
                 ip = (ip as i64 + addr) as usize;
               }
@@ -811,7 +807,7 @@ fn run(program: &mut Program) {
               }
             }
             JUMP_TYPE_JZ => {
-              if TRACE {println!("jz @{} ${}",src_index,addr);}
+              if TRACE {println!("jz @{} ${}",arg_index,addr);}
               if src == 0 {
                 ip = (ip as i64 + addr) as usize;
               }
