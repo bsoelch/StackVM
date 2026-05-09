@@ -498,7 +498,7 @@ fn run(program: &mut Program) {
       let base_shift = 8; // how much has op-data been shifted
       if TRACE {println!("{:09}: {:08x}  {:?}",ip-1,op,val_stack);}
       match op_type {
-        0x00..=0x0b => { // load-immediate[shift:3] [dst:4][data:*s]
+        0x00..=0x0b => { // load-immediate[shift:4] [dst:4][data:20s]
           let dst = op_data & 0xf;
           let op_data = (op as i32) >> (base_shift+4);
           // sign-extend 20-bit value in op_data
@@ -508,7 +508,7 @@ fn run(program: &mut Program) {
             val_stack.push(val);
           } else {
             let old_val = stack_get(&val_stack,dst as usize);
-            let val = val | old_val & ((1 << 8*op_type)-1);
+            let val = val | old_val & ((1 << 4*op_type)-1);
             stack_set(val,&mut val_stack,dst as usize);
           }
         }
