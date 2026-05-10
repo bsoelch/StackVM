@@ -396,11 +396,12 @@ class OpJmp(CodeOp):
 class OpJmpAddr(CodeOp):
   def __init__(self,jmp_type,addr,offset):
     self.jmp_type = jmp_type
-    self.target = target
+    self.addr = addr
+    self.offset = offset
   def __repr__(self):
-    return f"OpJmp({self.jmp_type},target={self.target})"
+    return f"OpJmp({self.jmp_type},addr={self.addr},self.offset={self.offset})"
   def generate(self,prog):
-    prog.appendU32(self.target << 8 | (jumpTypeId(self.jmp_type) | 0x20))
+    prog.appendU32(self.offset << 12 | ((self.addr.index-1) & 0xf) << 8 | (jumpTypeId(self.jmp_type) | 0x20))
 
 class OpJmpLabel(CodeOp):
   def __init__(self,jmp_type,base,offset):
